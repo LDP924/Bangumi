@@ -2,12 +2,13 @@ name: Sync upstream
 
 on:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: sync-upstream
@@ -20,8 +21,8 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -36,30 +37,44 @@ jobs:
           git remote -v
 
       - name: Fetch upstream
-        run: |
-          git fetch upstream --tags
+        run: git fetch upstream --tags
 
-      - name: Check for updates
+      - name: Check for new commits
         id: check
         run: |
+          set -euo pipefail
+
           UPSTREAM_COMMIT=$(git rev-parse upstream/master)
           LOCAL_COMMIT=$(git rev-parse origin/master)
-          echo "Upstream commit: $UPSTREAM_COMMIT"
-          echo "Local commit: $LOCAL_COMMIT"
 
           if [ "$UPSTREAM_COMMIT" = "$LOCAL_COMMIT" ]; then
-            echo "No updates from upstream"
+            echo "No new commits from upstream"
             echo "has_updates=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Updates available from upstream"
+            COMMIT_COUNT=$(git rev-list origin/master..upstream/master --count)
+            echo "New commits from upstream: $COMMIT_COUNT"
             echo "has_updates=true" >> "$GITHUB_OUTPUT"
             echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+            echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "commit_messages<<EOF"
+              git log origin/master..upstream/master --pretty=format:"- %s (%h)" --no-merges
+              echo ""
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+
+            echo "=== New commits ==="
+            git log origin/master..upstream/master --pretty=format:"- %s (%h, %cr)" --no-merges
+            echo ""
           fi
 
       - name: Test merge for conflicts
         if: steps.check.outputs.has_updates == 'true'
         id: conflicts
         run: |
+          set -euo pipefail
+
           git checkout -b upstream-sync-test
 
           set +e
@@ -87,16 +102,18 @@ jobs:
 
           git merge --abort 2>/dev/null || true
           git checkout master
-          git branch -D upstream-sync-test || true
+          git branch -D upstream-sync-test 2>/dev/null || true
 
       - name: Close stale sync PR
         if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           EXISTING=$(gh pr list --head upstream-sync-pr --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
           if [ -n "$EXISTING" ]; then
-            gh pr close "$EXISTING" --comment "Closing stale sync PR; recreating with latest upstream changes."
+            gh pr close "$EXISTING" --comment "关闭旧的同步 PR，重新创建以包含最新上游改动。"
             git push origin --delete upstream-sync-pr 2>/dev/null || true
           fi
 
@@ -105,45 +122,73 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           git checkout -b upstream-sync-pr
           git merge upstream/master --no-edit 2>&1 || true
           git push origin upstream-sync-pr --force
 
+          COMMIT_COUNT="${{ steps.check.outputs.commit_count }}"
+          COMMIT_MESSAGES="${{ steps.check.outputs.commit_messages }}"
           CONFLICT_LIST="${{ steps.conflicts.outputs.conflict_files }}"
+          UPSTREAM_COMMIT="${{ steps.check.outputs.upstream_commit }}"
+
           PR_BODY=$(cat <<BODY
-          Automatic sync with upstream [czy0729/Bangumi](https://github.com/czy0729/Bangumi).
+          ## 上游同步 — 检测到冲突，需手动解决
 
-          **Conflicts detected** — please review and resolve manually.
+          上游仓库 [czy0729/Bangumi](https://github.com/czy0729/Bangumi) 有 **${COMMIT_COUNT} 个新提交**。
 
-          Conflicted files:
+          ### 新提交列表
+
+          ${COMMIT_MESSAGES}
+
+          ### 冲突文件
+
           \`\`\`
           ${CONFLICT_LIST}
           \`\`\`
 
-          Upstream commit: ${{ steps.check.outputs.upstream_commit }}
+          请解决冲突后合并此 PR。
+
+          ---
+
+          上游提交: ${UPSTREAM_COMMIT}
           BODY
           )
 
           gh pr create \
-            --title "Sync with upstream (conflicts need manual resolution)" \
+            --title "同步上游（${COMMIT_COUNT} 个新提交，需手动解决冲突）" \
             --body "$PR_BODY" \
             --base master \
             --head upstream-sync-pr \
             --label "upstream-sync"
 
-          echo "::notice::PR created at https://github.com/${{ github.repository }}/pulls"
+          echo "::notice::PR 已创建: https://github.com/${{ github.repository }}/pulls"
 
       - name: Auto merge without conflicts
         if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           git checkout master
           git merge upstream/master --no-edit
           git push origin master
-          echo "Successfully synced with upstream"
+
+          echo "=== 同步完成 ==="
+          echo "合并的上游提交:"
+          git log HEAD~${{ steps.check.outputs.commit_count }}..HEAD --pretty=format:"- %s (%h)" --no-merges
+
+      - name: Trigger APK build
+        if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sleep 3
+          gh workflow run build-upstream-apk.yml --ref master
+          echo "已触发 APK 构建工作流"
 
       - name: No updates
         if: steps.check.outputs.has_updates == 'false'
-        run: |
-          echo "Repository is already up-to-date with upstream"
+        run: echo "已与上游同步，无新提交"
