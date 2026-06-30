@@ -3,7 +3,7 @@
 import { appendFileSync, createReadStream, existsSync, statSync } from 'node:fs'
 
 const upstreamRepo = 'czy0729/Bangumi'
-const semverTagPattern = /^\d+\.\d+\.\d+$/
+const semverTagPattern = /^(\d+)\.(\d+)\.(\d+)$/
 const apiBase = 'https://api.github.com'
 const apiVersion = '2022-11-28'
 const maxRetries = 3
@@ -13,7 +13,7 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
 
   if (command === 'resolve') {
-    await resolveCommand(options)
+    await resolveCommand()
     return
   }
 
@@ -22,147 +22,245 @@ async function main() {
     return
   }
 
-  throw new Error('Usage: upstream-apk.mjs <resolve|upload> [--tag <x.y.z>] [--apk <path>] [--sha <path>]')
+  throw new Error('Usage: upstream-apk.mjs <resolve|upload> [--tag] [--apk] [--clone-apk] [--source-ref] [--mode]')
 }
 
-async function resolveCommand(options) {
-  const requestedTag = (options.tag || process.env.REQUESTED_TAG || '').trim()
-  const forceRebuild = isTruthy(process.env.FORCE_REBUILD)
+async function resolveCommand() {
   const tags = await listUpstreamSemverTags()
-  const tag = requestedTag || tags[0]
+  const baseVersion = tags[0]
 
-  if (!semverTagPattern.test(tag)) {
-    throw new Error(`Upstream tag must match x.y.z, got: ${tag}`)
-  }
+  const latestCommit = await getUpstreamHeadCommit()
+  const tagCommit = await getTagCommit(baseVersion)
 
-  if (!tags.includes(tag)) {
-    throw new Error(`Upstream tag not found in ${upstreamRepo}: ${tag}`)
-  }
+  if (latestCommit === tagCommit) {
+    const releaseTag = releaseTagFor(baseVersion)
+    const release = await getReleaseByTag(targetRepo(), releaseTag)
+    const assets = release ? await listReleaseAssets(targetRepo(), release.id) : []
+    const hasOriginal = assets.some(a => a.name === apkAssetName(baseVersion))
+    const hasClone = assets.some(a => a.name === cloneAssetName(baseVersion))
+    const shouldBuild = !(hasOriginal && hasClone) ? 'true' : 'false'
 
-  const releaseTag = releaseTagFor(tag)
-  const assetName = apkAssetName(tag)
-  const shaName = `${assetName}.sha256`
-  const release = await getReleaseByTag(targetRepo(), releaseTag)
-  const assets = release ? await listReleaseAssets(targetRepo(), release.id) : []
-  const hasApk = assets.some(asset => asset.name === assetName)
-  const hasSha = assets.some(asset => asset.name === shaName)
-  const shouldBuild = forceRebuild || !(hasApk && hasSha) ? 'true' : 'false'
+    setOutput('should_build', shouldBuild)
+    setOutput('build_tag', baseVersion)
+    setOutput('source_ref', baseVersion)
+    setOutput('build_mode', 'release')
+    setOutput('asset_name', apkAssetName(baseVersion))
+    setOutput('clone_asset_name', cloneAssetName(baseVersion))
 
-  setOutput('tag', tag)
-  setOutput('release_tag', releaseTag)
-  setOutput('asset_name', assetName)
-  setOutput('sha_name', shaName)
-  setOutput('should_build', shouldBuild)
-
-  console.log(`Upstream tag: ${tag}`)
-  console.log(`Target release: ${releaseTag}`)
-  console.log(
-    forceRebuild
-      ? `Force rebuild requested; existing ${assetName} and ${shaName} will be replaced if present.`
-      : hasApk && hasSha
-      ? `Existing APK and checksum assets found: ${assetName}, ${shaName}`
-      : `APK assets will be built: ${assetName}, ${shaName}`,
-  )
-}
-
-async function uploadCommand(options) {
-  const tag = requiredOption(options, 'tag')
-  const apkPath = requiredOption(options, 'apk')
-  const shaPath = requiredOption(options, 'sha')
-
-  if (!semverTagPattern.test(tag)) {
-    throw new Error(`Upstream tag must match x.y.z, got: ${tag}`)
-  }
-
-  ensureFile(apkPath)
-  ensureFile(shaPath)
-
-  const repo = targetRepo()
-  const releaseTag = releaseTagFor(tag)
-  const assetName = apkAssetName(tag)
-  const shaName = `${assetName}.sha256`
-  const release = await ensureRelease(repo, tag, releaseTag)
-  const assets = await listReleaseAssets(repo, release.id)
-  const hasApk = assets.some(asset => asset.name === assetName)
-  const hasSha = assets.some(asset => asset.name === shaName)
-  const forceRebuild = isTruthy(process.env.FORCE_REBUILD)
-
-  if (hasApk && hasSha && !forceRebuild) {
-    console.log(`Release already has ${assetName} and ${shaName}; leaving them unchanged.`)
+    console.log(`Mode: release | Version: ${baseVersion} | ${shouldBuild === 'true' ? 'Will build' : 'Already built'}`)
     return
   }
 
-  for (const asset of assets.filter(asset => asset.name === assetName || asset.name === shaName)) {
+  const prevBuild = await findLatestCommitBuild(baseVersion)
+  const lastBuiltCommit = prevBuild ? extractBuiltFrom(prevBuild.body) : null
+
+  if (lastBuiltCommit && lastBuiltCommit === latestCommit) {
+    const prevTag = prevBuild.tag.replace(/^upstream-apk-/, '')
+    const release = await getReleaseByTag(targetRepo(), prevBuild.tag)
+    const assets = release ? await listReleaseAssets(targetRepo(), release.id) : []
+    const hasOriginal = assets.some(a => a.name === apkAssetName(prevTag))
+    const hasClone = assets.some(a => a.name === cloneAssetName(prevTag))
+    const shouldBuild = !(hasOriginal && hasClone) ? 'true' : 'false'
+
+    setOutput('should_build', shouldBuild)
+    setOutput('build_tag', prevTag)
+    setOutput('source_ref', latestCommit)
+    setOutput('build_mode', 'commit')
+    setOutput('asset_name', apkAssetName(prevTag))
+    setOutput('clone_asset_name', cloneAssetName(prevTag))
+
+    console.log(`Mode: commit | ${shouldBuild === 'true' ? 'Rebuilding (missing assets)' : 'Already built'} for ${latestCommit.slice(0, 7)}`)
+    return
+  }
+
+  const nextIncrement = prevBuild ? nextIncrementTag(baseVersion, prevBuild.tag) : `${baseVersion}.1`
+
+  setOutput('should_build', 'true')
+  setOutput('build_tag', nextIncrement)
+  setOutput('source_ref', latestCommit)
+  setOutput('build_mode', 'commit')
+  setOutput('asset_name', apkAssetName(nextIncrement))
+  setOutput('clone_asset_name', cloneAssetName(nextIncrement))
+
+  console.log(`Mode: commit | Version: ${nextIncrement} | Source: ${latestCommit.slice(0, 7)} | Will build`)
+}
+
+async function uploadCommand(options) {
+  const buildTag = requiredOption(options, 'tag')
+  const apkPath = requiredOption(options, 'apk')
+  const sourceRef = requiredOption(options, 'source-ref')
+  const mode = requiredOption(options, 'mode')
+  const cloneApkPath = requiredOption(options, 'clone-apk')
+
+  ensureFile(apkPath)
+  ensureFile(cloneApkPath)
+
+  const repo = targetRepo()
+  const releaseTag = releaseTagFor(buildTag)
+  const assetName = apkAssetName(buildTag)
+  const cloneName = cloneAssetName(buildTag)
+  const body = await buildReleaseBody(buildTag, sourceRef, mode)
+
+  const release = await ensureRelease(repo, releaseTag, buildTag, body)
+  const assets = await listReleaseAssets(repo, release.id)
+
+  const toDelete = [assetName, cloneName]
+  for (const asset of assets.filter(a => toDelete.includes(a.name))) {
     await deleteReleaseAsset(repo, asset.id)
   }
 
   await uploadAssetWithRetry(release.upload_url, apkPath, assetName, 'application/vnd.android.package-archive')
-  await uploadAssetWithRetry(release.upload_url, shaPath, shaName, 'text/plain; charset=utf-8')
+  await uploadAssetWithRetry(release.upload_url, cloneApkPath, cloneName, 'application/vnd.android.package-archive')
 
-  console.log(`Uploaded ${assetName} and ${shaName}`)
+  console.log(`Uploaded ${assetName} and ${cloneName}`)
   console.log(`Release URL: ${release.html_url}`)
+}
+
+async function buildReleaseBody(buildTag, sourceRef, mode) {
+  if (mode === 'release') {
+    const upstreamRelease = await fetchUpstreamRelease(buildTag)
+    const body = upstreamRelease?.body?.trim() || ''
+    return `${body}\n\n<!-- built-from: ${sourceRef} -->`
+  }
+
+  const parts = buildTag.split('.')
+  const baseVersion = `${parts[0]}.${parts[1]}.${parts[2]}`
+
+  const prevBuild = await findLatestCommitBuild(baseVersion)
+  const sinceRef = prevBuild ? extractBuiltFrom(prevBuild.body) : baseVersion
+
+  if (sinceRef === sourceRef && prevBuild?.body) {
+    return prevBuild.body
+  }
+
+  let commits = []
+  try {
+    commits = await fetchCommitsBetween(sinceRef, sourceRef)
+  } catch (error) {
+    console.error('Failed to fetch commits:', error.message)
+  }
+
+  if (commits.length === 0) {
+    commits = [{ message: `Update to ${sourceRef.slice(0, 7)}` }]
+  }
+
+  const lines = commits.map(c => `- ${c.message}`)
+  lines.push('')
+  lines.push(`<!-- built-from: ${sourceRef} -->`)
+
+  return lines.join('\n')
+}
+
+async function fetchUpstreamRelease(tag) {
+  try {
+    return await githubJson(`/repos/${upstreamRepo}/releases/tags/${tag}`, { allow404: true })
+  } catch {
+    return null
+  }
+}
+
+async function fetchCommitsBetween(fromRef, toRef) {
+  try {
+    const compare = await githubJson(
+      `/repos/${upstreamRepo}/compare/${fromRef}...${toRef}`,
+      { allow404: true },
+    )
+    if (!compare || !Array.isArray(compare.commits)) return []
+
+    return compare.commits
+      .map(item => ({
+        message: (item.commit?.message || '').split('\n')[0].trim(),
+        sha: (item.sha || '').slice(0, 7),
+      }))
+      .filter(c => c.message)
+  } catch {
+    return []
+  }
+}
+
+async function getUpstreamHeadCommit() {
+  const data = await githubJson(`/repos/${upstreamRepo}/commits/master`)
+  if (!data?.sha) throw new Error('Failed to get upstream master HEAD')
+  return data.sha
+}
+
+async function getTagCommit(tag) {
+  const data = await githubJson(`/repos/${upstreamRepo}/commits/${tag}`)
+  if (!data?.sha) throw new Error(`Failed to get commit for tag ${tag}`)
+  return data.sha
+}
+
+async function findLatestCommitBuild(baseVersion) {
+  const releases = await githubJson(`/repos/${targetRepo()}/releases?per_page=100`)
+  if (!Array.isArray(releases)) return null
+
+  const prefix = `upstream-apk-${baseVersion}.`
+  const matching = releases
+    .filter(r => r.tag_name.startsWith(prefix))
+    .sort((a, b) => compareIncrementTags(a.tag_name, b.tag_name))
+
+  if (matching.length === 0) return null
+  const latest = matching[matching.length - 1]
+  return { tag: latest.tag_name, body: latest.body || '' }
+}
+
+function nextIncrementTag(baseVersion, prevReleaseTag) {
+  const prevTag = prevReleaseTag.replace(/^upstream-apk-/, '')
+  const parts = prevTag.split('.')
+  const lastPart = parseInt(parts[parts.length - 1], 10) || 0
+  return `${baseVersion}.${lastPart + 1}`
+}
+
+function compareIncrementTags(a, b) {
+  const aParts = a.replace(/^upstream-apk-/, '').split('.').map(Number)
+  const bParts = b.replace(/^upstream-apk-/, '').split('.').map(Number)
+  for (let i = 0; i < Math.max(aParts.length, bParts.length); i += 1) {
+    const av = aParts[i] || 0
+    const bv = bParts[i] || 0
+    if (av !== bv) return av - bv
+  }
+  return 0
+}
+
+function extractBuiltFrom(body) {
+  if (!body) return null
+  const match = body.match(/<!-- built-from: ([a-f0-9]+) -->/)
+  return match ? match[1] : null
 }
 
 async function listUpstreamSemverTags() {
   const tags = []
-
   for (let page = 1; page <= 20; page += 1) {
     const pageTags = await githubJson(`/repos/${upstreamRepo}/tags?per_page=100&page=${page}`)
-    if (!Array.isArray(pageTags)) {
-      throw new Error('Unexpected GitHub tags response')
-    }
-
-    tags.push(...pageTags.map(tag => tag.name).filter(name => semverTagPattern.test(name)))
-
-    if (pageTags.length < 100) {
-      break
-    }
+    if (!Array.isArray(pageTags)) break
+    tags.push(...pageTags.map(t => t.name).filter(n => semverTagPattern.test(n)))
+    if (pageTags.length < 100) break
   }
-
-  const uniqueTags = [...new Set(tags)]
-  uniqueTags.sort(compareSemverDesc)
-
-  if (!uniqueTags.length) {
-    throw new Error(`No semantic version tags found in ${upstreamRepo}`)
-  }
-
-  return uniqueTags
+  const unique = [...new Set(tags)]
+  unique.sort(compareSemverDesc)
+  if (!unique.length) throw new Error(`No semantic version tags found in ${upstreamRepo}`)
+  return unique
 }
 
-async function ensureRelease(repo, upstreamTag, releaseTag) {
+async function ensureRelease(repo, releaseTag, buildTag, body) {
   const existing = await getReleaseByTag(repo, releaseTag)
-  const body = releaseBody(upstreamTag)
+  const name = `Bangumi ${buildTag}`
 
   if (existing) {
     return githubJson(`/repos/${repo}/releases/${existing.id}`, {
       method: 'PATCH',
-      body: {
-        name: releaseName(upstreamTag),
-        body,
-        prerelease: false,
-        draft: false,
-        make_latest: 'false',
-      },
+      body: { name, body, prerelease: false, draft: false, make_latest: 'true' },
     })
   }
 
   return githubJson(`/repos/${repo}/releases`, {
     method: 'POST',
-    body: {
-      tag_name: releaseTag,
-      name: releaseName(upstreamTag),
-      body,
-      prerelease: false,
-      draft: false,
-      make_latest: 'false',
-    },
+    body: { tag_name: releaseTag, name, body, prerelease: false, draft: false, make_latest: 'true' },
   })
 }
 
 async function getReleaseByTag(repo, tag) {
-  return githubJson(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`, {
-    allow404: true,
-  })
+  return githubJson(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`, { allow404: true })
 }
 
 async function listReleaseAssets(repo, releaseId) {
@@ -170,10 +268,7 @@ async function listReleaseAssets(repo, releaseId) {
 }
 
 async function deleteReleaseAsset(repo, assetId) {
-  await githubJson(`/repos/${repo}/releases/assets/${assetId}`, {
-    method: 'DELETE',
-    expectJson: false,
-  })
+  await githubJson(`/repos/${repo}/releases/assets/${assetId}`, { method: 'DELETE', expectJson: false })
 }
 
 async function uploadAssetWithRetry(uploadUrlTemplate, filePath, name, contentType) {
@@ -185,49 +280,25 @@ async function uploadAssetWithRetry(uploadUrlTemplate, filePath, name, contentTy
     try {
       const response = await fetch(uploadUrl, {
         method: 'POST',
-        headers: githubHeaders({
-          'Content-Type': contentType,
-          'Content-Length': String(size),
-        }),
+        headers: githubHeaders({ 'Content-Type': contentType, 'Content-Length': String(size) }),
         body: createReadStream(filePath),
         duplex: 'half',
       })
-
-      if (response.ok) {
-        return
-      }
-
+      if (response.ok) return
       const errorText = await response.text()
-      lastError = new Error(`GitHub upload failed (${response.status}): ${errorText}`)
-
-      if (response.status === 422) {
-        throw lastError
-      }
-
-      console.error(`Upload attempt ${attempt}/${maxRetries} failed: ${lastError.message}`)
+      lastError = new Error(`Upload failed (${response.status}): ${errorText}`)
+      if (response.status === 422) throw lastError
     } catch (error) {
-      if (error.message.includes('422')) {
-        throw error
-      }
+      if (error.message.includes('422')) throw error
       lastError = error
-      console.error(`Upload attempt ${attempt}/${maxRetries} failed: ${error.message}`)
     }
-
-    if (attempt < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt))
-    }
+    if (attempt < maxRetries) await new Promise(r => setTimeout(r, retryDelayMs * attempt))
   }
-
   throw lastError
 }
 
 async function githubJson(path, options = {}) {
-  const {
-    method = 'GET',
-    body,
-    allow404 = false,
-    expectJson = true,
-  } = options
+  const { method = 'GET', body, allow404 = false, expectJson = true } = options
 
   let lastError
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
@@ -237,31 +308,17 @@ async function githubJson(path, options = {}) {
       body: body ? JSON.stringify(body) : undefined,
     })
 
-    if (allow404 && response.status === 404) {
-      return null
-    }
-
+    if (allow404 && response.status === 404) return null
     if (!response.ok) {
       const message = await response.text()
-      lastError = new Error(`GitHub API ${method} ${path} failed (${response.status}): ${message}`)
-
-      if (response.status === 404 || response.status === 422 || response.status < 500) {
-        throw lastError
-      }
-
-      console.error(`API attempt ${attempt}/${maxRetries} failed: ${lastError.message}`)
+      lastError = new Error(`GitHub API ${method} ${path} (${response.status}): ${message}`)
+      if (response.status === 404 || response.status === 422 || response.status < 500) throw lastError
     } else {
-      if (!expectJson || response.status === 204) {
-        return null
-      }
+      if (!expectJson || response.status === 204) return null
       return response.json()
     }
-
-    if (attempt < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt))
-    }
+    if (attempt < maxRetries) await new Promise(r => setTimeout(r, retryDelayMs * attempt))
   }
-
   throw lastError
 }
 
@@ -277,116 +334,67 @@ function githubHeaders(extra = {}) {
 function parseArgs(argv) {
   const [command, ...rest] = argv
   const options = {}
-
-  for (let index = 0; index < rest.length; index += 1) {
-    const arg = rest[index]
-
-    if (!arg.startsWith('--')) {
-      throw new Error(`Unexpected argument: ${arg}`)
-    }
-
-    const equalsIndex = arg.indexOf('=')
-    if (equalsIndex > -1) {
-      options[arg.slice(2, equalsIndex)] = arg.slice(equalsIndex + 1)
-      continue
-    }
-
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]
+    if (!arg.startsWith('--')) throw new Error(`Unexpected argument: ${arg}`)
+    const eq = arg.indexOf('=')
+    if (eq > -1) { options[arg.slice(2, eq)] = arg.slice(eq + 1); continue }
     const key = arg.slice(2)
-    const value = rest[index + 1]
-    if (!value || value.startsWith('--')) {
-      throw new Error(`Missing value for --${key}`)
-    }
-
-    options[key] = value
-    index += 1
+    const val = rest[i + 1]
+    if (!val || val.startsWith('--')) throw new Error(`Missing value for --${key}`)
+    options[key] = val
+    i += 1
   }
-
   return { command, options }
 }
 
-function compareSemverDesc(left, right) {
-  const leftParts = left.split('.').map(Number)
-  const rightParts = right.split('.').map(Number)
-
-  for (let index = 0; index < 3; index += 1) {
-    if (leftParts[index] !== rightParts[index]) {
-      return rightParts[index] - leftParts[index]
-    }
+function compareSemverDesc(a, b) {
+  const ap = a.split('.').map(Number)
+  const bp = b.split('.').map(Number)
+  for (let i = 0; i < 3; i += 1) {
+    if (ap[i] !== bp[i]) return bp[i] - ap[i]
   }
-
   return 0
 }
 
-function releaseBody(tag) {
-  const runUrl = process.env.GITHUB_RUN_ID
-    ? `${process.env.GITHUB_SERVER_URL}/${targetRepo()}/actions/runs/${process.env.GITHUB_RUN_ID}`
-    : null
-
-  return [
-    `Automated signed APK build for upstream Bangumi tag \`${tag}\`.`,
-    `Source: https://github.com/${upstreamRepo}/tree/${tag}`,
-    `Source archive: https://github.com/${upstreamRepo}/archive/refs/tags/${tag}.zip`,
-    `This APK is signed with the project release keystore and ready for installation on arm64-v8a (64-bit ARM) devices running Android 5.0+ (API 21).`,
-    `SHA256 checksum is provided alongside the APK for integrity verification.`,
-    runUrl ? `Build run: ${runUrl}` : null,
-  ].filter(Boolean).join('\n\n')
+function releaseTagFor(buildTag) {
+  return `upstream-apk-${buildTag}`
 }
 
-function releaseName(tag) {
-  return `Bangumi ${tag} APK`
+function apkAssetName(buildTag) {
+  return `bangumi_v${buildTag}_arm64-v8a.apk`
 }
 
-function releaseTagFor(tag) {
-  return `upstream-apk-${tag}`
-}
-
-function apkAssetName(tag) {
-  return `Bangumi-${tag}.apk`
+function cloneAssetName(buildTag) {
+  return `bangumi_ldp924_v${buildTag}_arm64-v8a.apk`
 }
 
 function targetRepo() {
   const repo = process.env.GITHUB_REPOSITORY
-  if (!repo) {
-    throw new Error('GITHUB_REPOSITORY is required')
-  }
+  if (!repo) throw new Error('GITHUB_REPOSITORY is required')
   return repo
 }
 
 function githubToken() {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
-  if (!token) {
-    throw new Error('GITHUB_TOKEN is required')
-  }
+  if (!token) throw new Error('GITHUB_TOKEN is required')
   return token
 }
 
 function requiredOption(options, name) {
   const value = (options[name] || '').trim()
-  if (!value) {
-    throw new Error(`--${name} is required`)
-  }
+  if (!value) throw new Error(`--${name} is required`)
   return value
 }
 
-function isTruthy(value) {
-  return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase())
-}
-
 function ensureFile(filePath) {
-  if (!existsSync(filePath)) {
-    throw new Error(`File does not exist: ${filePath}`)
-  }
-
-  if (!statSync(filePath).isFile()) {
-    throw new Error(`Path is not a file: ${filePath}`)
-  }
+  if (!existsSync(filePath)) throw new Error(`File does not exist: ${filePath}`)
+  if (!statSync(filePath).isFile()) throw new Error(`Path is not a file: ${filePath}`)
 }
 
 function setOutput(name, value) {
   const outputPath = process.env.GITHUB_OUTPUT
-  if (outputPath) {
-    appendFileSync(outputPath, `${name}=${value}\n`)
-  }
+  if (outputPath) appendFileSync(outputPath, `${name}=${value}\n`)
 }
 
 main().catch(error => {
