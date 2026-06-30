@@ -49,14 +49,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Decode Android keystore
-        if: steps.upstream.outputs.should_build == 'true'
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/Bangumi.jks"
-          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/Bangumi.jks" >> "$GITHUB_ENV"
-
       - name: Resolve upstream tag
         id: upstream
         env:
@@ -68,6 +60,15 @@ jobs:
       - name: Skip existing APK
         if: steps.upstream.outputs.should_build != 'true'
         run: echo "APK asset ${{ steps.upstream.outputs.asset_name }} already exists on release ${{ steps.upstream.outputs.release_tag }}."
+
+      # ✅ 修复：移到了 "Resolve upstream tag" 之后，确保能访问 steps.upstream.outputs
+      - name: Decode Android keystore
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/Bangumi.jks"
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/Bangumi.jks" >> "$GITHUB_ENV"
 
       - name: Download upstream source
         if: steps.upstream.outputs.should_build == 'true'
@@ -137,7 +138,7 @@ jobs:
             if (filtered.length !== plugins.length) {
               appJson.expo.plugins = filtered
               writeJson('app.json', appJson)
-              console.log('Removed expo-web-browser config plugin for Expo 52 APK builds')
+              console.log('Removed expo-web-browser config plugin for Exo 52 APK builds')
             }
           }
 
