@@ -1,0 +1,149 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync with upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/czy0729/Bangumi.git || true
+          git remote -v
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream --tags
+
+      - name: Check for updates
+        id: check
+        run: |
+          UPSTREAM_COMMIT=$(git rev-parse upstream/master)
+          LOCAL_COMMIT=$(git rev-parse origin/master)
+          echo "Upstream commit: $UPSTREAM_COMMIT"
+          echo "Local commit: $LOCAL_COMMIT"
+
+          if [ "$UPSTREAM_COMMIT" = "$LOCAL_COMMIT" ]; then
+            echo "No updates from upstream"
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Updates available from upstream"
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test merge for conflicts
+        if: steps.check.outputs.has_updates == 'true'
+        id: conflicts
+        run: |
+          git checkout -b upstream-sync-test
+
+          set +e
+          git merge upstream/master --no-commit --no-ff > /tmp/merge-output.txt 2>&1
+          MERGE_EXIT=$?
+          set -e
+
+          cat /tmp/merge-output.txt
+
+          CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+
+          if [ -n "$CONFLICT_FILES" ]; then
+            echo "Conflicts detected in files:"
+            echo "$CONFLICT_FILES"
+            echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "conflict_files<<EOF"
+              echo "$CONFLICT_FILES"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "No conflicts"
+            echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          git merge --abort 2>/dev/null || true
+          git checkout master
+          git branch -D upstream-sync-test || true
+
+      - name: Close stale sync PR
+        if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --head upstream-sync-pr --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh pr close "$EXISTING" --comment "Closing stale sync PR; recreating with latest upstream changes."
+            git push origin --delete upstream-sync-pr 2>/dev/null || true
+          fi
+
+      - name: Create Pull Request for manual review
+        if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git checkout -b upstream-sync-pr
+          git merge upstream/master --no-edit 2>&1 || true
+          git push origin upstream-sync-pr --force
+
+          CONFLICT_LIST="${{ steps.conflicts.outputs.conflict_files }}"
+          PR_BODY=$(cat <<BODY
+          Automatic sync with upstream [czy0729/Bangumi](https://github.com/czy0729/Bangumi).
+
+          **Conflicts detected** — please review and resolve manually.
+
+          Conflicted files:
+          \`\`\`
+          ${CONFLICT_LIST}
+          \`\`\`
+
+          Upstream commit: ${{ steps.check.outputs.upstream_commit }}
+          BODY
+          )
+
+          gh pr create \
+            --title "Sync with upstream (conflicts need manual resolution)" \
+            --body "$PR_BODY" \
+            --base master \
+            --head upstream-sync-pr \
+            --label "upstream-sync"
+
+          echo "::notice::PR created at https://github.com/${{ github.repository }}/pulls"
+
+      - name: Auto merge without conflicts
+        if: steps.check.outputs.has_updates == 'true' && steps.conflicts.outputs.has_conflicts == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git checkout master
+          git merge upstream/master --no-edit
+          git push origin master
+          echo "Successfully synced with upstream"
+
+      - name: No updates
+        if: steps.check.outputs.has_updates == 'false'
+        run: |
+          echo "Repository is already up-to-date with upstream"
