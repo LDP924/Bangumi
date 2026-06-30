@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 import { appendFileSync, createReadStream, existsSync, statSync } from 'node:fs'
+
 const upstreamRepo = 'czy0729/Bangumi'
 const semverTagPattern = /^\d+\.\d+\.\d+$/
 const apiBase = 'https://api.github.com'
 const apiVersion = '2022-11-28'
+const maxRetries = 3
+const retryDelayMs = 2000
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
@@ -93,8 +96,8 @@ async function uploadCommand(options) {
     await deleteReleaseAsset(repo, asset.id)
   }
 
-  await uploadAsset(release.upload_url, apkPath, assetName, 'application/vnd.android.package-archive')
-  await uploadAsset(release.upload_url, shaPath, shaName, 'text/plain; charset=utf-8')
+  await uploadAssetWithRetry(release.upload_url, apkPath, assetName, 'application/vnd.android.package-archive')
+  await uploadAssetWithRetry(release.upload_url, shaPath, shaName, 'text/plain; charset=utf-8')
 
   console.log(`Uploaded ${assetName} and ${shaName}`)
   console.log(`Release URL: ${release.html_url}`)
@@ -173,22 +176,49 @@ async function deleteReleaseAsset(repo, assetId) {
   })
 }
 
-async function uploadAsset(uploadUrlTemplate, filePath, name, contentType) {
+async function uploadAssetWithRetry(uploadUrlTemplate, filePath, name, contentType) {
   const uploadUrl = `${uploadUrlTemplate.replace(/\{.*$/, '')}?name=${encodeURIComponent(name)}`
   const size = statSync(filePath).size
-  const response = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: githubHeaders({
-      'Content-Type': contentType,
-      'Content-Length': String(size),
-    }),
-    body: createReadStream(filePath),
-    duplex: 'half',
-  })
 
-  if (!response.ok) {
-    throw new Error(`GitHub upload failed (${response.status}): ${await response.text()}`)
+  let lastError
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    try {
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: githubHeaders({
+          'Content-Type': contentType,
+          'Content-Length': String(size),
+        }),
+        body: createReadStream(filePath),
+        duplex: 'half',
+      })
+
+      if (response.ok) {
+        return
+      }
+
+      const errorText = await response.text()
+      lastError = new Error(`GitHub upload failed (${response.status}): ${errorText}`)
+
+      if (response.status === 422) {
+        throw lastError
+      }
+
+      console.error(`Upload attempt ${attempt}/${maxRetries} failed: ${lastError.message}`)
+    } catch (error) {
+      if (error.message.includes('422')) {
+        throw error
+      }
+      lastError = error
+      console.error(`Upload attempt ${attempt}/${maxRetries} failed: ${error.message}`)
+    }
+
+    if (attempt < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt))
+    }
   }
+
+  throw lastError
 }
 
 async function githubJson(path, options = {}) {
@@ -199,26 +229,40 @@ async function githubJson(path, options = {}) {
     expectJson = true,
   } = options
 
-  const response = await fetch(`${apiBase}${path}`, {
-    method,
-    headers: githubHeaders(body ? { 'Content-Type': 'application/json' } : {}),
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let lastError
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    const response = await fetch(`${apiBase}${path}`, {
+      method,
+      headers: githubHeaders(body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    })
 
-  if (allow404 && response.status === 404) {
-    return null
+    if (allow404 && response.status === 404) {
+      return null
+    }
+
+    if (!response.ok) {
+      const message = await response.text()
+      lastError = new Error(`GitHub API ${method} ${path} failed (${response.status}): ${message}`)
+
+      if (response.status === 404 || response.status === 422 || response.status < 500) {
+        throw lastError
+      }
+
+      console.error(`API attempt ${attempt}/${maxRetries} failed: ${lastError.message}`)
+    } else {
+      if (!expectJson || response.status === 204) {
+        return null
+      }
+      return response.json()
+    }
+
+    if (attempt < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt))
+    }
   }
 
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(`GitHub API ${method} ${path} failed (${response.status}): ${message}`)
-  }
-
-  if (!expectJson || response.status === 204) {
-    return null
-  }
-
-  return response.json()
+  throw lastError
 }
 
 function githubHeaders(extra = {}) {
@@ -279,25 +323,25 @@ function releaseBody(tag) {
     : null
 
   return [
-    `Automated unsigned APK build for upstream Bangumi tag \`${tag}\`.`,
+    `Automated signed APK build for upstream Bangumi tag \`${tag}\`.`,
     `Source: https://github.com/${upstreamRepo}/tree/${tag}`,
     `Source archive: https://github.com/${upstreamRepo}/archive/refs/tags/${tag}.zip`,
-    'The APK is intentionally unsigned and should be signed by your distribution tool or a later signing workflow.',
-    'This APK is built for arm64-v8a architecture (64-bit ARM devices).',
+    `This APK is signed with the project release keystore and ready for installation on arm64-v8a (64-bit ARM) devices running Android 5.0+ (API 21).`,
+    `SHA256 checksum is provided alongside the APK for integrity verification.`,
     runUrl ? `Build run: ${runUrl}` : null,
   ].filter(Boolean).join('\n\n')
 }
 
 function releaseName(tag) {
-  return `Bangumi ${tag} unsigned APK`
+  return `Bangumi ${tag} APK`
 }
 
 function releaseTagFor(tag) {
-  return `upstream-${tag}`
+  return `upstream-apk-${tag}`
 }
 
 function apkAssetName(tag) {
-  return `Bangumi-${tag}-unsigned.apk`
+  return `Bangumi-${tag}.apk`
 }
 
 function targetRepo() {
