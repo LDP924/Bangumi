@@ -109,7 +109,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
   /** 自己用户信息 */
   @computed get userInfo() {
-    this.init('userInfo')
+    this。init('userInfo')
     return this.state.userInfo
   }
 
@@ -181,7 +181,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
   /** 是否开发者 */
   @computed get isDeveloper() {
-    return [456208, 671062].includes(Number(this.myUserId))
+    return [456208,671062].includes(Number(this.myUserId))
   }
 
   /** 是否登录 (客户端内是否获得了 api 鉴权) */
