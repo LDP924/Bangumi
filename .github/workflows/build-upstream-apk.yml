@@ -61,7 +61,7 @@ jobs:
         if: steps.upstream.outputs.should_build != 'true'
         run: echo "APK asset ${{ steps.upstream.outputs.asset_name }} already exists on release ${{ steps.upstream.outputs.release_tag }}."
 
-      # ✅ 修复：移到了 "Resolve upstream tag" 之后，确保能访问 steps.upstream.outputs
+      # ✅ 修复1：移到了 "Resolve upstream tag" 之后，确保能访问 steps.upstream.outputs
       - name: Decode Android keystore
         if: steps.upstream.outputs.should_build == 'true'
         env:
@@ -138,7 +138,7 @@ jobs:
             if (filtered.length !== plugins.length) {
               appJson.expo.plugins = filtered
               writeJson('app.json', appJson)
-              console.log('Removed expo-web-browser config plugin for Exo 52 APK builds')
+              console.log('Removed expo-web-browser config plugin for Expo 52 APK builds')
             }
           }
 
@@ -166,7 +166,10 @@ jobs:
           corepack enable
           corepack prepare yarn@latest --activate
           yarn --version
-          yarn install --ignore-engines --ignore-scripts --network-timeout 600000 --no-lockfile
+          
+          # ✅ 修复2：Yarn v4 使用 --mode=skip-build 替代 --ignore-scripts
+          yarn install --mode=skip-build --network-timeout 600000 --no-lockfile
+          
           ./node_modules/.bin/patch-package --patch-dir packages/apk/patches || echo "::warning::Some APK patch-package patches did not apply; continuing for Android build."
 
       - name: Build Release APK (refresh Gradle dependencies)
