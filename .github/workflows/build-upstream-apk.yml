@@ -1,0 +1,265 @@
+name: Build upstream signed APK
+
+on:
+  schedule:
+    - cron: '37 8 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream Bangumi tag to build, for example 8.32.3. Leave empty for latest semantic tag.'
+        required: false
+        type: string
+      force:
+        description: 'Rebuild and replace existing release assets.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: build-upstream-apk-${{ github.event.inputs.tag || 'latest' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout automation
+        uses: actions/checkout@v5
+
+      - name: Set up Node (always latest LTS)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+
+      - name: Set up Java (always latest LTS)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode Android keystore
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/Bangumi.jks"
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/Bangumi.jks" >> "$GITHUB_ENV"
+
+      - name: Resolve upstream tag
+        id: upstream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ github.event.inputs.tag || '' }}
+          FORCE_REBUILD: ${{ github.event.inputs.force == 'true' }}
+        run: node .github/scripts/upstream-apk.mjs resolve
+
+      - name: Skip existing APK
+        if: steps.upstream.outputs.should_build != 'true'
+        run: echo "APK asset ${{ steps.upstream.outputs.asset_name }} already exists on release ${{ steps.upstream.outputs.release_tag }}."
+
+      - name: Download upstream source
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          source_zip="$RUNNER_TEMP/bangumi-$TAG.zip"
+          source_dir="$RUNNER_TEMP/Bangumi-$TAG"
+
+          rm -rf "$source_dir" "$source_zip"
+          curl -fsSL "https://github.com/czy0729/Bangumi/archive/refs/tags/$TAG.zip" -o "$source_zip"
+          unzip -q "$source_zip" -d "$RUNNER_TEMP"
+
+          if [ ! -d "$source_dir" ]; then
+            echo "::error::Expected source directory not found: $source_dir"
+            exit 1
+          fi
+
+          source_dir="$(cd "$source_dir" && pwd -P)"
+          echo "SOURCE_DIR=$source_dir" >> "$GITHUB_ENV"
+
+      - name: Prepare APK source
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          node packages/env.js apk
+
+          # Configure signing
+          cat >> android/gradle.properties <<EOF
+          MYAPP_RELEASE_STORE_FILE=$KEYSTORE_PATH
+          MYAPP_RELEASE_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}
+          MYAPP_RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MYAPP_RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+          node <<'NODE'
+          const fs = require('fs')
+
+          function readJson(path) {
+            return JSON.parse(fs.readFileSync(path, 'utf8'))
+          }
+
+          function writeJson(path, value) {
+            fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
+          }
+
+          const pkg = readJson('package.json')
+          pkg.dependencies ||= {}
+          if (!pkg.dependencies['expo-speech']) {
+            pkg.dependencies['expo-speech'] = '~13.0.1'
+            writeJson('package.json', pkg)
+            console.log('Added expo-speech for the APK dependency set')
+          }
+
+          const appJson = readJson('app.json')
+          const plugins = appJson.expo?.plugins
+          if (Array.isArray(plugins)) {
+            const filtered = plugins.filter(plugin => {
+              if (plugin === 'expo-web-browser') return false
+              return !(Array.isArray(plugin) && plugin[0] === 'expo-web-browser')
+            })
+
+            if (filtered.length !== plugins.length) {
+              appJson.expo.plugins = filtered
+              writeJson('app.json', appJson)
+              console.log('Removed expo-web-browser config plugin for Expo 52 APK builds')
+            }
+          }
+
+          const appVersion = appJson.expo?.version
+          if (!appVersion) {
+            throw new Error('app.json is missing expo.version')
+          }
+
+          fs.appendFileSync(process.env.GITHUB_ENV, `APP_VERSION=${appVersion}\n`)
+          NODE
+
+          app_version="$(node -p "require('./app.json').expo.version")"
+          echo "App version: $app_version"
+
+      - name: Install JavaScript dependencies (fresh, no lock file)
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          # Delete lock file to force fresh dependency resolution (latest versions)
+          echo "Removing yarn.lock to fetch latest dependencies..."
+          rm -f yarn.lock
+
+          corepack enable
+          corepack prepare yarn@latest --activate
+          yarn --version
+          yarn install --ignore-engines --ignore-scripts --network-timeout 600000 --no-lockfile
+          ./node_modules/.bin/patch-package --patch-dir packages/apk/patches || echo "::warning::Some APK patch-package patches did not apply; continuing for Android build."
+
+      - name: Build Release APK (refresh Gradle dependencies)
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          NODE_ENV: production
+          ENTRY_FILE: index.js
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR/android"
+
+          chmod +x ./gradlew
+
+          # Clean Gradle cache to force fresh dependency resolution
+          echo "Cleaning Gradle cache for fresh dependency fetch..."
+          ./gradlew cleanBuildCache --no-daemon || true
+
+          # Build release APK with signing
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            --refresh-dependencies \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
+            -Dorg.gradle.parallel=true \
+            -Dorg.gradle.configureondemand=true
+
+          # Verify APK is signed
+          if command -v apksigner &> /dev/null; then
+            echo "Verifying APK signature..."
+            apksigner verify "$SOURCE_DIR/android/app/build/outputs/apk/release/app-release.apk"
+            echo "✅ APK is signed successfully"
+          fi
+
+      - name: Package APK
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          ASSET_NAME: ${{ steps.upstream.outputs.asset_name }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          apk_path="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$apk_path" ]; then
+            echo "::error::Expected APK not found: $apk_path"
+            exit 1
+          fi
+
+          target_apk="$GITHUB_WORKSPACE/$ASSET_NAME"
+          cp "$apk_path" "$target_apk"
+
+          app_version="$(node -p "require('./app.json').expo.version")"
+          if [ "$app_version" != "$TAG" ]; then
+            echo "::warning::app.json version $app_version does not match upstream tag $TAG."
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+          shasum -a 256 "$ASSET_NAME" > "$ASSET_NAME.sha256"
+
+          echo "APK_PATH=$target_apk" >> "$GITHUB_ENV"
+          echo "SHA_PATH=$target_apk.sha256" >> "$GITHUB_ENV"
+
+      - name: Validate APK
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+
+          # Check APK exists and is valid
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::APK not found: $APK_PATH"
+            exit 1
+          fi
+
+          # Check APK size (should be > 10MB for a reasonable React Native app)
+          apk_size="$(stat -f%z "$APK_PATH" 2>/dev/null || stat -c%s "$APK_PATH")"
+          if [ "$apk_size" -lt 10485760 ]; then
+            echo "::warning::APK size is less than 10MB: $apk_size bytes"
+          fi
+
+          # Verify APK is signed
+          if command -v apksigner &> /dev/null; then
+            if apksigner verify "$APK_PATH" 2>&1 | grep -q "VERIFIED"; then
+              echo "✅ APK signature verified successfully"
+            else
+              echo "::error::APK is not signed. Signing may have failed."
+              exit 1
+            fi
+          fi
+
+          echo "APK validation passed: $APK_PATH ($(numfmt --to=iec-i --suffix=B "$apk_size"))"
+
+      - name: Upload release assets
+        if: steps.upstream.outputs.should_build == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REBUILD: ${{ github.event.inputs.force == 'true' }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: node .github/scripts/upstream-apk.mjs upload --tag "$TAG" --apk "$APK_PATH" --sha "$SHA_PATH"
