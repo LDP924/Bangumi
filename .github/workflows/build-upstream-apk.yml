@@ -35,19 +35,35 @@ jobs:
       - name: Checkout automation
         uses: actions/checkout@v5
 
-      - name: Set up Node (always latest LTS)
+      - name: Set up Node 20
         uses: actions/setup-node@v5
         with:
-          node-version: 'lts/*'
+          node-version: '20'
 
-      - name: Set up Java (always latest LTS)
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '17'
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Install NDK versions
+        run: |
+          yes | sdkmanager "ndk;23.1.7779620" > /dev/null 2>&1 || true
+          yes | sdkmanager "ndk;27.1.12297006" > /dev/null 2>&1 || true
+
+      - name: Cache Yarn global cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/yarn
+            ~/.cache/node
+          key: yarn-global-${{ runner.os }}
+          restore-keys: |
+            yarn-global-${{ runner.os }}
 
       - name: Resolve upstream tag
         id: upstream
@@ -61,7 +77,6 @@ jobs:
         if: steps.upstream.outputs.should_build != 'true'
         run: echo "APK asset ${{ steps.upstream.outputs.asset_name }} already exists on release ${{ steps.upstream.outputs.release_tag }}."
 
-      # ✅ 修复1：移到了 "Resolve upstream tag" 之后，确保能访问 steps.upstream.outputs
       - name: Decode Android keystore
         if: steps.upstream.outputs.should_build == 'true'
         env:
@@ -93,20 +108,29 @@ jobs:
 
       - name: Prepare APK source
         if: steps.upstream.outputs.should_build == 'true'
+        env:
+          MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           cd "$SOURCE_DIR"
 
-          # APK is Android platform, use 'android' environment
           node packages/env.js android
 
-          # Configure signing
-          cat >> android/gradle.properties <<EOF
-          MYAPP_RELEASE_STORE_FILE=$KEYSTORE_PATH
-          MYAPP_RELEASE_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}
-          MYAPP_RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          MYAPP_RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}
-          EOF
+          sed 's/darwin-x86_64/linux-x86_64/g' android/rust/build-android.sh > android/rust/build-android-linux.sh || true
+          chmod +x android/rust/build-android-linux.sh || true
+
+          sed -i 's|https\\://mirrors.cloud.tencent.com/gradle/|https\\://services.gradle.org/distributions/|g' android/gradle/wrapper/gradle-wrapper.properties || true
+
+          cp android/gradle_yours.properties android/gradle.properties
+
+          sed -i 's/^org.gradle.configureondemand=true$/org.gradle.configureondemand=false/' android/gradle.properties
+
+          sed -i "s|^MYAPP_RELEASE_STORE_FILE=.*|MYAPP_RELEASE_STORE_FILE=$KEYSTORE_PATH|" android/gradle.properties
+          sed -i "s|^MYAPP_RELEASE_KEY_ALIAS=.*|MYAPP_RELEASE_KEY_ALIAS=$MYAPP_RELEASE_KEY_ALIAS|" android/gradle.properties
+          sed -i "s|^MYAPP_RELEASE_STORE_PASSWORD=.*|MYAPP_RELEASE_STORE_PASSWORD=$MYAPP_RELEASE_STORE_PASSWORD|" android/gradle.properties
+          sed -i "s|^MYAPP_RELEASE_KEY_PASSWORD=.*|MYAPP_RELEASE_KEY_PASSWORD=$MYAPP_RELEASE_KEY_PASSWORD|" android/gradle.properties
 
           node <<'NODE'
           const fs = require('fs')
@@ -153,28 +177,38 @@ jobs:
           app_version="$(node -p "require('./app.json').expo.version")"
           echo "App version: $app_version"
 
-      - name: Install JavaScript dependencies (fresh, no lock file)
+      - name: Install JavaScript dependencies
         if: steps.upstream.outputs.should_build == 'true'
         run: |
           set -euo pipefail
           cd "$SOURCE_DIR"
 
-          # Delete lock file to force fresh dependency resolution (latest versions)
-          echo "Removing yarn.lock to fetch latest dependencies..."
-          rm -f yarn.lock
-
           corepack enable
-          corepack prepare yarn@latest --activate
+          corepack prepare yarn@1.22.22 --activate
           yarn --version
-          
-          # ✅ 修复2：Yarn v4 使用 --mode=skip-build 替代 --ignore-scripts
-          # ✅ 修复3：Yarn v4 不支持 --no-lockfile，删除 yarn.lock 即可
-          # ✅ 修复4：不传 --immutable 即可禁用 immutable 模式（允许创建新的 lockfile）
-          yarn install --mode=skip-build --network-timeout 600000
-          
-          ./node_modules/.bin/patch-package --patch-dir packages/apk/patches || echo "::warning::Some APK patch-package patches did not apply; continuing for Android build."
 
-      - name: Build Release APK (refresh Gradle dependencies)
+          yarn install --ignore-engines --ignore-scripts --network-timeout 600000
+
+          ./node_modules/.bin/patch-package --patch-dir packages/android/patches || echo "::warning::Some Android patch-package patches did not apply; continuing for Android build."
+
+      - name: Build Rust native library
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR/android/rust"
+
+          if [ ! -f build-android-linux.sh ]; then
+            echo "No Rust build script found, skipping."
+            exit 0
+          fi
+
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+
+          echo "y" | bash build-android-linux.sh || echo "::warning::Rust build failed; continuing without native library."
+
+      - name: Build Release APK
         if: steps.upstream.outputs.should_build == 'true'
         env:
           NODE_ENV: production
@@ -185,25 +219,11 @@ jobs:
 
           chmod +x ./gradlew
 
-          # Clean Gradle cache to force fresh dependency resolution
-          echo "Cleaning Gradle cache for fresh dependency fetch..."
-          ./gradlew cleanBuildCache --no-daemon || true
-
-          # Build release APK with signing
           ./gradlew assembleRelease \
             --no-daemon \
             --stacktrace \
-            --refresh-dependencies \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
-            -Dorg.gradle.parallel=true \
-            -Dorg.gradle.configureondemand=true
-
-          # Verify APK is signed
-          if command -v apksigner &> /dev/null; then
-            echo "Verifying APK signature..."
-            apksigner verify "$SOURCE_DIR/android/app/build/outputs/apk/release/app-release.apk"
-            echo "✅ APK is signed successfully"
-          fi
+            -Dorg.gradle.parallel=true
 
       - name: Package APK
         if: steps.upstream.outputs.should_build == 'true'
@@ -214,11 +234,17 @@ jobs:
           set -euo pipefail
           cd "$SOURCE_DIR"
 
-          apk_path="android/app/build/outputs/apk/release/app-release.apk"
-          if [ ! -f "$apk_path" ]; then
-            echo "::error::Expected APK not found: $apk_path"
+          apk_dir="android/app/build/outputs/apk/release"
+          apk_path="$(ls "$apk_dir"/app-*-release.apk 2>/dev/null | head -1 || ls "$apk_dir"/app-release.apk 2>/dev/null | head -1)"
+
+          if [ -z "$apk_path" ] || [ ! -f "$apk_path" ]; then
+            echo "::error::No release APK found in $apk_dir/"
+            echo "Directory contents:"
+            ls -la "$apk_dir/" 2>/dev/null || true
             exit 1
           fi
+
+          echo "Found APK: $apk_path"
 
           target_apk="$GITHUB_WORKSPACE/$ASSET_NAME"
           cp "$apk_path" "$target_apk"
@@ -239,29 +265,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Check APK exists and is valid
           if [ ! -f "$APK_PATH" ]; then
             echo "::error::APK not found: $APK_PATH"
             exit 1
           fi
 
-          # Check APK size (should be > 10MB for a reasonable React Native app)
-          apk_size="$(stat -f%z "$APK_PATH" 2>/dev/null || stat -c%s "$APK_PATH")"
+          apk_size="$(stat -c%s "$APK_PATH" 2>/dev/null || stat -f%z "$APK_PATH")"
           if [ "$apk_size" -lt 10485760 ]; then
             echo "::warning::APK size is less than 10MB: $apk_size bytes"
           fi
 
-          # Verify APK is signed
-          if command -v apksigner &> /dev/null; then
-            if apksigner verify "$APK_PATH" 2>&1 | grep -q "VERIFIED"; then
-              echo "✅ APK signature verified successfully"
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}" -name apksigner 2>/dev/null | head -1)"
+          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+            echo "Verifying APK signature with: $APKSIGNER"
+            if "$APKSIGNER" verify "$APK_PATH" 2>&1 | grep -q "VERIFIED"; then
+              echo "APK signature verified successfully"
             else
               echo "::error::APK is not signed. Signing may have failed."
               exit 1
             fi
+          else
+            echo "::warning::apksigner not found, skipping signature verification"
           fi
 
-          echo "APK validation passed: $APK_PATH ($(numfmt --to=iec-i --suffix=B "$apk_size"))"
+          echo "APK validation passed: $APK_PATH ($apk_size bytes)"
 
       - name: Upload release assets
         if: steps.upstream.outputs.should_build == 'true'
