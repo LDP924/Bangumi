@@ -168,7 +168,8 @@ jobs:
           yarn --version
           
           # ✅ 修复2：Yarn v4 使用 --mode=skip-build 替代 --ignore-scripts
-          yarn install --mode=skip-build --network-timeout 600000 --no-lockfile
+          # ✅ 修复3：Yarn v4 不支持 --no-lockfile，删除 yarn.lock 即可
+          yarn install --mode=skip-build --network-timeout 600000
           
           ./node_modules/.bin/patch-package --patch-dir packages/apk/patches || echo "::warning::Some APK patch-package patches did not apply; continuing for Android build."
 
