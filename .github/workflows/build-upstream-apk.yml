@@ -96,7 +96,8 @@ jobs:
           set -euo pipefail
           cd "$SOURCE_DIR"
 
-          node packages/env.js apk
+          # APK is Android platform, use 'android' environment
+          node packages/env.js android
 
           # Configure signing
           cat >> android/gradle.properties <<EOF
