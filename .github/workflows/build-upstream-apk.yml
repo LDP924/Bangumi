@@ -1,6 +1,8 @@
 name: Build upstream signed APK
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
