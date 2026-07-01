@@ -3,7 +3,7 @@
 import { appendFileSync, createReadStream, existsSync, statSync } from 'node:fs'
 
 const upstreamRepo = 'czy0729/Bangumi'
-const semverTagPattern = /^(\d+)\.(\d+)\.(\d+)$/
+const semverTagPattern = /^\d+\.\d+\.\d+$/
 const apiBase = 'https://api.github.com'
 const apiVersion = '2022-11-28'
 const maxRetries = 3
@@ -141,10 +141,11 @@ async function buildReleaseBody(buildTag, sourceRef, mode) {
   }
 
   if (commits.length === 0) {
-    commits = [{ message: `Update to ${sourceRef.slice(0, 7)}` }]
+    const shortSha = sourceRef.slice(0, 7)
+    return `- [Update to ${shortSha}](https://github.com/${upstreamRepo}/commit/${sourceRef})\n\n<!-- built-from: ${sourceRef} -->`
   }
 
-  const lines = commits.map(c => `- ${c.message}`)
+  const lines = commits.map(c => `- ${c.message} (${c.sha})`)
   lines.push('')
   lines.push(`<!-- built-from: ${sourceRef} -->`)
 
@@ -244,7 +245,7 @@ async function listUpstreamSemverTags() {
 
 async function ensureRelease(repo, releaseTag, buildTag, body) {
   const existing = await getReleaseByTag(repo, releaseTag)
-  const name = `Bangumi ${buildTag}`
+  const name = `Bangumi ${buildTag} unsigned APK`
 
   if (existing) {
     return githubJson(`/repos/${repo}/releases/${existing.id}`, {
@@ -366,7 +367,7 @@ function apkAssetName(buildTag) {
 }
 
 function cloneAssetName(buildTag) {
-  return `bangumi_ldp924_v${buildTag}_arm64-v8a.apk`
+  return `bangumi_clone_v${buildTag}_arm64-v8a.apk`
 }
 
 function targetRepo() {
