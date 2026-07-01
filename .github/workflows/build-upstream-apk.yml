@@ -1,8 +1,6 @@
 name: Build upstream signed APK
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -144,13 +142,6 @@ jobs:
           function readJson(p) { return JSON.parse(fs.readFileSync(p, 'utf8')) }
           function writeJson(p, v) { fs.writeFileSync(p, `${JSON.stringify(v, null, 2)}\n`) }
 
-          const pkg = readJson('package.json')
-          pkg.dependencies ||= {}
-          if (!pkg.dependencies['expo-speech']) {
-            pkg.dependencies['expo-speech'] = '~13.0.1'
-            writeJson('package.json', pkg)
-          }
-
           const appJson = readJson('app.json')
           const plugins = appJson.expo?.plugins
           if (Array.isArray(plugins)) {
@@ -194,7 +185,7 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
 
-          echo "y" | bash build-android-linux.sh || echo "::warning::Rust build failed; continuing without native library."
+          echo "y" | bash build-android-linux.sh
 
       - name: Build Release APK
         if: steps.upstream.outputs.should_build == 'true'
