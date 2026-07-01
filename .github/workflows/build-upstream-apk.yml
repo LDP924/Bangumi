@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -43,7 +43,7 @@ jobs:
           yes | sdkmanager "ndk;27.1.12297006" > /dev/null 2>&1 || true
 
       - name: Cache Yarn global cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/yarn
@@ -81,39 +81,11 @@ jobs:
 
           echo "Keystore size: $(stat -c%s "$KEYSTORE_PATH") bytes"
 
-      - name: Download upstream source
-        if: steps.upstream.outputs.should_build == 'true'
-        env:
-          SOURCE_REF: ${{ steps.upstream.outputs.source_ref }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            archive_url="https://github.com/czy0729/Bangumi/archive/${SOURCE_REF}.zip"
-          else
-            archive_url="https://github.com/czy0729/Bangumi/archive/refs/tags/${SOURCE_REF}.zip"
-          fi
-
-          source_zip="$RUNNER_TEMP/bangumi-source.zip"
-          rm -rf "$source_zip" "$RUNNER_TEMP"/Bangumi-*
-          curl -fsSL "$archive_url" -o "$source_zip"
-          unzip -q "$source_zip" -d "$RUNNER_TEMP"
-
-          source_dir="$(find "$RUNNER_TEMP" -maxdepth 1 -type d -name "Bangumi-*" | head -1)"
-          if [ -z "$source_dir" ] || [ ! -d "$source_dir" ]; then
-            echo "::error::Source directory not found after extraction"
-            exit 1
-          fi
-
-          source_dir="$(cd "$source_dir" && pwd -P)"
-          echo "Source ref: $SOURCE_REF"
-          echo "SOURCE_DIR=$source_dir" >> "$GITHUB_ENV"
-
       - name: Prepare APK source
         if: steps.upstream.outputs.should_build == 'true'
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          cd "$GITHUB_WORKSPACE"
 
           node packages/env.js android
 
@@ -153,14 +125,13 @@ jobs:
           }
 
           if (!appJson.expo?.version) throw new Error('app.json is missing expo.version')
-          fs.appendFileSync(process.env.GITHUB_ENV, `APP_VERSION=${appJson.expo.version}\n`)
           NODE
 
       - name: Install JavaScript dependencies
         if: steps.upstream.outputs.should_build == 'true'
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          cd "$GITHUB_WORKSPACE"
 
           corepack enable
           corepack prepare yarn@1.22.22 --activate
@@ -174,7 +145,7 @@ jobs:
         if: steps.upstream.outputs.should_build == 'true'
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR/android/rust"
+          cd "$GITHUB_WORKSPACE/android/rust"
 
           if [ ! -f build-android-linux.sh ]; then
             echo "No Rust build script found, skipping."
@@ -197,7 +168,7 @@ jobs:
           MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR/android"
+          cd "$GITHUB_WORKSPACE/android"
 
           chmod +x ./gradlew
 
@@ -222,7 +193,7 @@ jobs:
           ASSET_NAME: ${{ steps.upstream.outputs.asset_name }}
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          cd "$GITHUB_WORKSPACE"
 
           apk_dir="android/app/build/outputs/apk/release"
           apk_path="$(ls "$apk_dir"/app-*-release.apk 2>/dev/null | head -1 || ls "$apk_dir"/app-release.apk 2>/dev/null | head -1)"
@@ -248,7 +219,7 @@ jobs:
           CLONE_ASSET_NAME: ${{ steps.upstream.outputs.clone_asset_name }}
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR/android"
+          cd "$GITHUB_WORKSPACE/android"
 
           sed -i -E 's/applicationId "[^"]*"/applicationId "com.ldp924.bangumi"/' app/build.gradle
 
@@ -264,7 +235,7 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
             -Dorg.gradle.parallel=true
 
-          cd "$SOURCE_DIR"
+          cd "$GITHUB_WORKSPACE"
           apk_dir="android/app/build/outputs/apk/release"
           apk_path="$(ls "$apk_dir"/app-*-release.apk 2>/dev/null | head -1 || ls "$apk_dir"/app-release.apk 2>/dev/null | head -1)"
 

@@ -2,7 +2,7 @@ name: Sync upstream
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -52,21 +52,27 @@ jobs:
             echo "has_updates=false" >> "$GITHUB_OUTPUT"
           else
             COMMIT_COUNT=$(git rev-list origin/master..upstream/master --count)
-            echo "New commits from upstream: $COMMIT_COUNT"
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-            echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
-            echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
 
-            {
-              echo "commit_messages<<EOF"
-              git log origin/master..upstream/master --pretty=format:"- %s (%h)" --no-merges
+            if [ "$COMMIT_COUNT" -eq 0 ]; then
+              echo "Local is ahead of upstream (user changes only), no upstream updates to sync"
+              echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New commits from upstream: $COMMIT_COUNT"
+              echo "has_updates=true" >> "$GITHUB_OUTPUT"
+              echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+              echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
+
+              {
+                echo "commit_messages<<EOF"
+                git log origin/master..upstream/master --pretty=format:"- %s (%h)" --no-merges
+                echo ""
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+
+              echo "=== New commits ==="
+              git log origin/master..upstream/master --pretty=format:"- %s (%h, %cr)" --no-merges
               echo ""
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-
-            echo "=== New commits ==="
-            git log origin/master..upstream/master --pretty=format:"- %s (%h, %cr)" --no-merges
-            echo ""
+            fi
           fi
 
       - name: Test merge for conflicts
@@ -126,6 +132,8 @@ jobs:
 
           git checkout -b upstream-sync-pr
           git merge upstream/master --no-edit 2>&1 || true
+          git add -A 2>/dev/null || true
+          git commit -m "Merge upstream/master (conflicts need manual resolution)" --no-verify 2>/dev/null || true
           git push origin upstream-sync-pr --force
 
           COMMIT_COUNT="${{ steps.check.outputs.commit_count }}"
