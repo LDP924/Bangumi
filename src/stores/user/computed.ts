@@ -109,7 +109,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
   /** 自己用户信息 */
   @computed get userInfo() {
-    this。init('userInfo')
+    this init('userInfo')
     return this.state.userInfo
   }
 
