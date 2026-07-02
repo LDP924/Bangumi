@@ -127,6 +127,22 @@ jobs:
           if (!appJson.expo?.version) throw new Error('app.json is missing expo.version')
           NODE
 
+      - name: Debug - Verify source files (pre-build)
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          echo "=== advance.json first 3 chars ==="
+          head -c 3 src/assets/json/advance.json | xxd
+          echo "=== advance.json contains 671062? ==="
+          grep -c "671062" src/assets/json/advance.json || echo "NOT FOUND"
+          echo "=== advance.json context around 670985 ==="
+          grep -o '.\{0,10\}670985.\{0,60\}' src/assets/json/advance.json
+          echo "=== computed.ts isDeveloper ==="
+          grep -A2 "get isDeveloper" src/stores/user/computed.ts
+          echo "=== computed.ts userInfo init ==="
+          grep -A2 "get userInfo" src/stores/user/computed.ts | cat -A
+
       - name: Install JavaScript dependencies
         if: steps.upstream.outputs.should_build == 'true'
         run: |
@@ -140,6 +156,18 @@ jobs:
           yarn install --ignore-engines --ignore-scripts --network-timeout 600000
 
           ./node_modules/.bin/patch-package --patch-dir packages/android/patches || echo "::warning::Some Android patch-package patches did not apply; continuing."
+
+      - name: Debug - Verify source files (post-install)
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          echo "=== advance.json first 3 chars (post-install) ==="
+          head -c 3 src/assets/json/advance.json | xxd
+          echo "=== advance.json contains 671062? (post-install) ==="
+          grep -c "671062" src/assets/json/advance.json || echo "NOT FOUND"
+          echo "=== computed.ts isDeveloper (post-install) ==="
+          grep -A2 "get isDeveloper" src/stores/user/computed.ts
 
       - name: Build Rust native library
         if: steps.upstream.outputs.should_build == 'true'
@@ -186,6 +214,28 @@ jobs:
             -PMYAPP_RELEASE_KEY_PASSWORD="$MYAPP_RELEASE_KEY_PASSWORD" \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
             -Dorg.gradle.parallel=true
+
+      - name: Debug - Check bundle for 671062
+        if: steps.upstream.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          BUNDLE=$(find android/app/build/generated -name "index.android.bundle" 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then
+            echo "No bundle found in generated assets, searching alternative locations..."
+            BUNDLE=$(find android/app/build -name "*.bundle" 2>/dev/null | head -1)
+          fi
+          if [ -n "$BUNDLE" ]; then
+            echo "Bundle found: $BUNDLE"
+            echo "=== 671062 in bundle? ==="
+            strings "$BUNDLE" | grep -c "671062" || echo "NOT FOUND in strings"
+            echo "=== 456208 in bundle? ==="
+            strings "$BUNDLE" | grep -c "456208" || echo "NOT FOUND in strings"
+            echo "=== advance data context ==="
+            strings "$BUNDLE" | grep -o '.\{0,10\}670985.\{0,60\}' | head -3
+          else
+            echo "::warning::No bundle file found to inspect"
+          fi
 
       - name: Package APK
         if: steps.upstream.outputs.should_build == 'true'
