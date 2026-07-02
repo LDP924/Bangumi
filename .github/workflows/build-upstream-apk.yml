@@ -127,6 +127,10 @@ jobs:
           if (!appJson.expo?.version) throw new Error('app.json is missing expo.version')
           NODE
 
+          # Inject advance + developer checks — Hermes DCE strips advance.json keys and constants
+          # Use String() comparison on runtime variables so Hermes cannot constant-fold them
+          sed -i 's/let flag = false/let flag = false\n      if (String(myId) === "671062" || String(myUserId) === "671062") flag = true/' src/stores/system/fetch.ts
+
       - name: Debug - Verify source files (pre-build)
         if: steps.upstream.outputs.should_build == 'true'
         run: |
@@ -136,12 +140,10 @@ jobs:
           head -c 3 src/assets/json/advance.json | xxd
           echo "=== advance.json contains 671062? ==="
           grep -c "671062" src/assets/json/advance.json || echo "NOT FOUND"
-          echo "=== advance.json context around 670985 ==="
-          grep -o '.\{0,10\}670985.\{0,60\}' src/assets/json/advance.json
+          echo "=== fetch.ts advance injection ==="
+          grep -A3 "let flag = false" src/stores/system/fetch.ts | head -5
           echo "=== computed.ts isDeveloper ==="
           grep -A2 "get isDeveloper" src/stores/user/computed.ts
-          echo "=== computed.ts userInfo init ==="
-          grep -A2 "get userInfo" src/stores/user/computed.ts | cat -A
 
       - name: Install JavaScript dependencies
         if: steps.upstream.outputs.should_build == 'true'
