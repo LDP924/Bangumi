@@ -88,7 +88,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
   /** 用户 cookie (html) */
   @computed get userCookie() {
-    this。init('userCookie')
+    this.init('userCookie')
     return this.state.userCookie
   }
 
@@ -103,7 +103,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
   /** @deprecated hm.js 请求 cookie , 区分唯一用户, 一旦获取通常不再变更 */
   @computed get hmCookie() {
-    this。init('hmCookie')
+    this.init('hmCookie')
     return this.state.hmCookie
   }
 
