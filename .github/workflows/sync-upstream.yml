@@ -1,6 +1,6 @@
 name: Sync upstream
 
-于:
+on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
