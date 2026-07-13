@@ -31,6 +31,10 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
+      - name: Configure custom merge driver for advance.json
+        run: |
+          git config merge.advance-json.driver "python3 .github/scripts/merge-advance-json.py %O %A %B"
+
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/czy0729/Bangumi.git || true
