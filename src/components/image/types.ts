@@ -15,7 +15,7 @@ export type Props = Override<
     style?: ViewStyle
 
     /** 强制传递给图片的样式 */
-    imageStyle?: ImageStyle
+    imageStyle?: ImageStyle | ViewStyle | ViewStyle[]
 
     /** 图片地址 */
     src?: ImageSource | string
@@ -72,7 +72,7 @@ export type Props = Override<
     cache?: boolean
 
     /** 图片请求头 */
-    headers?: object
+    headers?: Record<string, string>
 
     /** 开发模式, 强制不显示图片 */
     textOnly?: boolean
