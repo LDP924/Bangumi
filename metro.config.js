@@ -5,6 +5,7 @@
  * @Last Modified time: 2026-04-21 13:05:10
  */
 /** Learn more https://docs.expo.io/guides/customizing-metro */
+const fs = require('fs')
 const path = require('path')
 const { getDefaultConfig } = require('expo/metro-config')
 
@@ -12,64 +13,48 @@ const { getDefaultConfig } = require('expo/metro-config')
 const config = getDefaultConfig(__dirname)
 
 // const FileStore = require('metro-cache').FileStore
-// const path = require('path')
 // config.cacheStores = [new FileStore({ root: path.join(__dirname, 'metro-cache') })]
 
 const monorepoPackages = {
   stream: require.resolve('stream-browserify')
 }
 
-// [修复 2026-08] Metro 原生 tsconfig 路径解析在这个项目的 CI/Gradle
-// export:embed 构建里没有生效，@components/@utils 等别名 resolve 失败
-// （见 build-upstream-apk.yml 报错）。
-//
-// 这里用 resolveRequest 自己做前缀匹配做兜底，不用 extraNodeModules——
-// extraNodeModules 对 '@xxx' 这种以 @ 开头的 key 只能精确匹配整个模块名，
-// 遇到 '@utils/hooks' 这种带子路径的导入会被当成一个独立的 scoped 包名
-// 去查找（跟 '@babel/core' 是同一个包同理），查不到对应条目，
-// 所以只有不带子路径的用法（如 '@components'）能生效，带子路径的
-// （如 '@utils/hooks'）全部会漏网。
-//
-// 下面这份要跟 tsconfig.json 的 paths 保持同步——两边同时改。
-const aliasMap = {
-  '@_': path.resolve(__dirname, 'src/screens/_'),
-  '@assets': path.resolve(__dirname, 'src/assets'),
-  '@bgm': path.resolve(__dirname, 'src/assets/images/bgm'),
-  '@components': path.resolve(__dirname, 'src/components'),
-  '@constants': path.resolve(__dirname, 'src/constants'),
-  '@screens': path.resolve(__dirname, 'src/screens'),
-  '@stores': path.resolve(__dirname, 'src/stores'),
-  '@styles': path.resolve(__dirname, 'src/styles'),
-  '@tinygrail': path.resolve(__dirname, 'src/screens/tinygrail'),
-  '@types': path.resolve(__dirname, 'src/types'),
-  '@utils': path.resolve(__dirname, 'src/utils'),
-  '@src': path.resolve(__dirname, 'src'),
-  '@': path.resolve(__dirname, './')
-}
-
-// 按 key 长度从长到短排序：保证更具体的前缀（比如 '@utils'）
-// 优先于更短/更宽泛的前缀（比如兜底用的 '@'）被匹配到
-const aliasKeys = Object.keys(aliasMap).sort((a, b) => b.length - a.length)
-
 config.resolver.extraNodeModules = monorepoPackages
+config.resolver.blacklistRE = [/packages\/.*/]
+config.resolver.assetExts.push('proto', 'bin')
 
-const upstreamResolveRequest = config.resolver.resolveRequest
+// Metro 0.76 不支持 tsconfig paths，从 tsconfig.json 动态读取别名映射
+const { compilerOptions } = JSON.parse(
+  fs
+    .readFileSync(path.join(__dirname, 'tsconfig.json'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+)
+const { baseUrl = '.', paths = {} } = compilerOptions
+
+const aliases = Object.entries(paths).reduce((acc, [pattern, targets]) => {
+  const key = pattern.replace(/\/?\*$/, '')
+  const value = path.resolve(__dirname, baseUrl, targets[0].replace(/\/?\*$/, ''))
+  if (key) acc[key] = value
+  return acc
+}, {})
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  for (const key of aliasKeys) {
-    if (moduleName === key || moduleName.startsWith(key + '/')) {
-      const rest = moduleName.slice(key.length)
-      const target = aliasMap[key] + rest
-      return context.resolveRequest(context, target, platform)
+  if (aliases[moduleName]) {
+    return context.resolveRequest(context, aliases[moduleName], platform)
+  }
+
+  for (const key of Object.keys(aliases)) {
+    const prefix = `${key}/`
+    if (moduleName.startsWith(prefix)) {
+      return context.resolveRequest(
+        context,
+        path.join(aliases[key], moduleName.slice(prefix.length)),
+        platform
+      )
     }
   }
 
-  if (upstreamResolveRequest) {
-    return upstreamResolveRequest(context, moduleName, platform)
-  }
   return context.resolveRequest(context, moduleName, platform)
 }
-
-config.resolver.blacklistRE = [/packages\/.*/]
-config.resolver.assetExts.push('proto', 'bin')
 
 module.exports = config
