@@ -7,8 +7,7 @@
 import React from 'react'
 import { BackHandler } from 'react-native'
 import { observer } from 'mobx-react'
-import ActivityIndicator from '@ant-design/react-native/lib/activity-indicator'
-import { Component, Flex, Modal, Text } from '@components'
+import { ActivityIndicator, Component, Flex, Modal, Text } from '@components'
 import { _, collectionStore, subjectStore, systemStore, userStore } from '@stores'
 import { getInt } from '@stores/subject'
 import {
@@ -181,7 +180,7 @@ export const ManageModal = observer(
             tags: tag.join(' '),
             comment
           }
-          if (this.state.status === '') state.status = newStatus.type
+          if (this.state.status === '') state.status = newStatus.type as State['status']
           if (privacy !== undefined) state.privacy = privacy
 
           // 如果用户输入过评论，无论如何先保存草稿

@@ -2,145 +2,61 @@
  * @Author: czy0729
  * @Date: 2020-09-28 18:30:52
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-07-26 01:34:12
+ * @Last Modified time: 2026-08-12 07:42:33
  */
 import React from 'react'
-import { ActivityIndicator, Animated, TouchableOpacity, View } from 'react-native'
-import { WithTheme } from '@ant-design/react-native/lib/style'
-import ToastStyles from '@ant-design/react-native/lib/toast/style/index'
+import { ActivityIndicator, TouchableOpacity, View } from 'react-native'
+import Animated from 'react-native-reanimated'
+import { observer } from 'mobx-react'
 import { syncThemeStore } from '@utils/async'
-import { USE_NATIVE_DRIVER } from '@constants/constants'
+import { r } from '@utils/dev'
+import { COMPONENT } from '../ds'
 import BlurView from '../blur-view'
 import Desc from '../desc'
-import { styles as overrideStyles } from './styles'
+import { useToastAnimation } from './hooks'
+import { memoStyles } from './styles'
 
-import type { State, ToastProps } from './type'
-import type { TimerRef } from '@types'
+import type { Props } from '../types'
 
-export default class Container extends React.Component<ToastProps, State> {
-  static defaultProps = {
-    duration: 3,
-    mask: true,
-    onClose() {}
-  }
+/**
+ * Toast 单条提示容器, 淡入淡出 + loading 时显示关闭
+ */
+function Container({
+  duration = 3,
+  mask = true,
+  onClose,
+  onAnimationEnd,
+  type = '',
+  content
+}: Props) {
+  r(COMPONENT)
 
-  state = {
-    fadeAnim: new Animated.Value(0),
-    showClose: false
-  }
+  const _ = syncThemeStore()
+  const styles = memoStyles()
 
-  anim: Animated.CompositeAnimation | null
+  const { showClose, animatedStyle } = useToastAnimation(duration, type, onClose, onAnimationEnd)
 
-  timeoutId: TimerRef
-
-  componentDidMount() {
-    const { type, onClose, onAnimationEnd } = this.props
-    const duration = this.props.duration as number
-
-    const timing = Animated.timing
-    if (this.anim) this.anim = null
-
-    const animArr = [
-      timing(this.state.fadeAnim, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: USE_NATIVE_DRIVER
-      }),
-      Animated.delay(duration * 1000)
-    ]
-
-    if (duration > 0) {
-      animArr.push(
-        timing(this.state.fadeAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: USE_NATIVE_DRIVER
-        })
-      )
-    }
-
-    this.anim = Animated.sequence(animArr)
-    this.anim.start(() => {
-      if (duration > 0) {
-        this.anim = null
-        if (onClose) onClose()
-        if (onAnimationEnd) onAnimationEnd()
-      }
-    })
-
-    if (type === 'loading') {
-      this.timeoutId = setTimeout(() => {
-        this.timeoutId = null
-        this.setState({
-          showClose: true
-        })
-      }, 5600)
-    }
-  }
-
-  componentWillUnmount() {
-    try {
-      if (this.timeoutId) clearTimeout(this.timeoutId)
-
-      if (this.anim) {
-        this.anim.stop()
-        this.anim = null
-      }
-    } catch {}
-  }
-
-  render() {
-    const _ = syncThemeStore()
-    const { type = '', content, mask, onAnimationEnd } = this.props
-    const { showClose } = this.state
-
-    return (
-      <WithTheme styles={this.props.styles} themeStyles={ToastStyles}>
-        {styles => {
-          let iconDom: React.ReactElement | null = null
-          if (type === 'loading') {
-            iconDom = (
-              <ActivityIndicator
-                style={styles.centering}
-                animating
-                color={_.isDark ? 'white' : 'gray'}
-              />
-            )
-          } else if (type === 'info') {
-            iconDom = null
-          }
-
-          return (
-            <View
-              style={overrideStyles.container}
-              pointerEvents={mask && !showClose ? undefined : 'box-none'}
-            >
-              <TouchableOpacity
-                style={styles.innerContainer}
-                activeOpacity={1}
-                onPress={onAnimationEnd}
-              >
-                <Animated.View
-                  style={{
-                    opacity: this.state.fadeAnim
-                  }}
-                >
-                  <BlurView
-                    style={[styles.innerWrap, iconDom ? styles.iconToast : styles.textToast]}
-                  >
-                    <View style={overrideStyles.body}>
-                      {iconDom}
-                      <Desc style={styles.content} showClose={showClose}>
-                        {content}
-                      </Desc>
-                    </View>
-                  </BlurView>
-                </Animated.View>
-              </TouchableOpacity>
-            </View>
-          )
-        }}
-      </WithTheme>
+  let iconDom: React.ReactElement | null = null
+  if (type === 'loading') {
+    iconDom = (
+      <ActivityIndicator style={styles.centering} animating color={_.isDark ? 'white' : 'gray'} />
     )
   }
+
+  return (
+    <View style={styles.container} pointerEvents={mask && !showClose ? undefined : 'box-none'}>
+      <TouchableOpacity style={styles.innerContainer} activeOpacity={1} onPress={onAnimationEnd}>
+        <Animated.View style={animatedStyle}>
+          <BlurView style={[styles.innerWrap, iconDom ? styles.iconToast : styles.textToast]}>
+            <View style={styles.body}>
+              {iconDom}
+              <Desc showClose={showClose}>{content}</Desc>
+            </View>
+          </BlurView>
+        </Animated.View>
+      </TouchableOpacity>
+    </View>
+  )
 }
+
+export default observer(Container)

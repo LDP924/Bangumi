@@ -2,13 +2,12 @@
  * @Author: czy0729
  * @Date: 2024-07-28 04:24:25
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-19 17:40:47
+ * @Last Modified time: 2026-08-12 05:44:34
  */
 import React from 'react'
 import { View } from 'react-native'
 import { observer } from 'mobx-react'
-import ActivityIndicator from '@ant-design/react-native/lib/activity-indicator'
-import { Flex, ScrollView, Text, Touchable } from '@components'
+import { ActivityIndicator, Flex, ScrollView, Text, Touchable } from '@components'
 import { _, subjectStore, userStore } from '@stores'
 import { stl } from '@utils'
 import { memoStyles } from './styles'

@@ -7,8 +7,8 @@
 import React from 'react'
 import { View } from 'react-native'
 import { observer } from 'mobx-react'
-import ActivityIndicator from '@ant-design/react-native/lib/activity-indicator'
 import {
+  ActivityIndicator,
   Button,
   Flex,
   Heatmap,

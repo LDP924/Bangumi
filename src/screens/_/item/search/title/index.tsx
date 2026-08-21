@@ -2,13 +2,13 @@
  * @Author: czy0729
  * @Date: 2022-07-23 13:59:30
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-20 19:43:37
+ * @Last Modified time: 2026-08-16 08:15:09
  */
 import React from 'react'
 import { observer } from 'mobx-react'
 import { Flex, Highlight, Katakana, Text } from '@components'
+import { _ } from '@stores'
 import { cnjp, getVisualLength } from '@utils'
-import { styles } from './styles'
 
 import type { Props } from './types'
 
@@ -54,7 +54,7 @@ function Title({ name, nameCn, comments, highlight }: Props) {
             )}
           </Flex>
         ) : (
-          <Katakana.Provider size={size} numberOfLines={numberOfLines} bold>
+          <Katakana.Provider size={size} bold numberOfLines={numberOfLines}>
             <Katakana size={size} bold>
               {title}
             </Katakana>
@@ -69,7 +69,7 @@ function Title({ name, nameCn, comments, highlight }: Props) {
 
       {showBottom && (
         <Katakana.Provider
-          itemStyle={styles.itemStyle}
+          firstLineStyle={_.mt.sm}
           type='sub'
           size={sizeBottom}
           lineHeight={13}

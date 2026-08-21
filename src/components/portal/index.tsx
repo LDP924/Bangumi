@@ -1,10 +1,24 @@
 /*
  * @Author: czy0729
- * @Date: 2021-12-25 04:40:33
+ * @Date: 2026-08-11 10:00:00
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-19 02:58:28
+ * @Last Modified time: 2026-08-12 08:30:00
  */
-import Portal from '@ant-design/react-native/lib/portal'
+import React, { useContext } from 'react'
+import { portal } from './api'
+import { PortalConsumer, PortalContext, PortalHost } from './host'
+
+import type { ReactNode } from 'react'
+
+function Portal({ children }: { children?: ReactNode }) {
+  const manager = useContext(PortalContext)
+  return <PortalConsumer manager={manager}>{children}</PortalConsumer>
+}
+
+Portal.Host = PortalHost
+Portal.add = portal.add
+Portal.remove = portal.remove
 
 export { Portal }
+
 export default Portal
