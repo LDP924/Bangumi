@@ -168,6 +168,13 @@ jobs:
           BODY
           )
 
+          # 幂等创建 label（不存在时创建，已存在时报错但忽略）
+          # [修复 2026-08-22] #396-398 失败根因：'upstream-sync' label 不存在，
+          # gh pr create --label 直接报错退出
+          gh label create "upstream-sync" \
+            --color 0e8a16 \
+            --description "自动同步上游产生的 PR" 2>/dev/null || true
+
           gh pr create \
             --title "同步上游（${COMMIT_COUNT} 个新提交，需手动解决冲突）" \
             --body "$PR_BODY" \

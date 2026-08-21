@@ -190,6 +190,11 @@ dependencies {
   // The version of react-native is set by the React Native Gradle Plugin
   implementation("com.facebook.react:react-android")
 
+  // MT管理器免ROOT访问data目录：https://github.com/L-JINBIN/MTDataFilesProvider
+  // 用 implementation 而不是 debugImplementation，
+  // 因为CI这边只跑 assembleRelease，debugImplementation 在release包里会被自动去除
+  implementation("com.github.L-JINBIN:MTDataFilesProvider:v1.0.0")
+
   def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
   def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
   def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";
