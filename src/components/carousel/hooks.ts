@@ -42,11 +42,16 @@ export const useCarousel = ({
 
   const step = vertical ? size.height : size.width
 
-  const setCurrentSafe = useCallback((index: number) => {
-    currentRef.current = index
-    setCurrent(index)
-    setVisibleIndex(index)
-  }, [])
+  const setCurrentSafe = useCallback(
+    (index: number) => {
+      currentRef.current = index
+      setCurrent(index)
+      // 可见窗口使用原始坐标 (infinite 模式含首尾克隆页偏移), 与 handleScroll 写入的坐标空间保持一致,
+      // 否则 iOS 无回跳复位时窗口会落在克隆页之外导致白屏
+      setVisibleIndex(index + (infinite ? 1 : 0))
+    },
+    [infinite]
+  )
 
   /** 滚动中实时计算可见页 (窗口化渲染依据) */
   const handleScroll = useCallback(
@@ -76,16 +81,15 @@ export const useCarousel = ({
       setCurrentSafe(result.index)
       if (result.loopJump) {
         offsetRef.current = vertical ? { x: 0, y: result.offsetTo } : { x: result.offsetTo, y: 0 }
-        if (Platform.OS === 'android') {
-          const index = result.index + (infinite ? 1 : 0)
-          setTimeout(() => {
-            scrollRef.current?.scrollTo({
-              x: vertical ? 0 : size.width * index,
-              y: vertical ? size.height * index : 0,
-              animated: false
-            })
-          }, 10)
-        }
+        // 双平台都需无动画复位到真实页: iOS 不复位会停留在克隆页, 窗口化渲染不覆盖克隆页导致白屏
+        const index = result.index + (infinite ? 1 : 0)
+        setTimeout(() => {
+          scrollRef.current?.scrollTo({
+            x: vertical ? 0 : size.width * index,
+            y: vertical ? size.height * index : 0,
+            animated: false
+          })
+        }, 10)
       }
       if (afterChange) afterChange(result.index)
       clearTimeout(scrollEndTimerRef.current)
@@ -158,12 +162,17 @@ export const useCarousel = ({
     (index: number) => {
       if (index === currentRef.current || !step) return
       const target = step * (index + (infinite ? 1 : 0))
+      // 同步基准偏移, 滚动结束 handleScrollEnd 以 offsetRef 差值计算页码, 不同步会以陈旧值算出错页;
+      // 置滚动锁避免跳页动画期间自动播放计时器插入第二次 scrollTo
+      offsetRef.current = vertical ? { x: 0, y: target } : { x: target, y: 0 }
+      setCurrentSafe(index)
+      isScrollingRef.current = true
+      setIsScrolling(true)
       if (vertical) {
         scrollRef.current?.scrollTo({ x: 0, y: target, animated: true })
       } else {
         scrollRef.current?.scrollTo({ x: target, y: 0, animated: true })
       }
-      setCurrentSafe(index)
     },
     [infinite, setCurrentSafe, step, vertical]
   )
@@ -181,17 +190,40 @@ export const useCarousel = ({
   }, [handleAutoplay])
 
   return {
+    /** 外部绑定到 ScrollView 的 ref */
     scrollRef,
+
+    /** 当前激活的页码索引 */
     current,
+
+    /** 当前可见窗口的索引 (窗口化渲染依据) */
     visibleIndex,
+
+    /** 是否正在滚动中 */
     isScrolling,
+
+    /** 自动播放是否已结束 (非无限模式滚到最后一项后为真) */
     autoplayEnd,
+
+    /** 当前滚动偏移量 ref, 用于计算翻页方向及无限模式回跳 */
     offsetRef,
+
+    /** 滚动中实时回调, 更新可见窗口 */
     handleScroll,
+
+    /** 滚动开始回调, 标记滚动状态并触发 onScrollBeginDrag */
     handleScrollBegin,
+
+    /** 滚动结束回调, 计算目标页并触发 afterChange / onMomentumScrollEnd */
     handleScrollEnd,
+
+    /** 布局回调, 完成初始定位与宽度同步 */
     handleLayout,
+
+    /** 点击分页圆点跳转到对应页 */
     handleDotPress,
+
+    /** 安全更新 current 与 visibleIndex 的封装方法 */
     setCurrentSafe
   }
 }
