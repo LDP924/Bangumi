@@ -9,7 +9,6 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
-  workflows: write
 
 concurrency:
   group: sync-upstream
@@ -26,6 +25,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # 用 PAT 而非 GITHUB_TOKEN：上游 merge 可能携带 .github/workflows 变更，
+          # GITHUB_TOKEN 没有 workflows 权限，push 会被拒 (refusing to allow a GitHub App...)
+          token: ${{ secrets.SYNC_PAT }}
 
       - name: Configure Git
         run: |
