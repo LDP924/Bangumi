@@ -2,12 +2,12 @@
  * @Author: czy0729
  * @Date: 2022-05-13 05:32:07
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-07-26 17:48:51
+ * @Last Modified time: 2026-09-01 03:39:03
  */
 import React from 'react'
 import { rakuenStore, subjectStore } from '@stores'
-import { getInt } from '@stores/rakuen/utils'
 import { navigationReference, postTask } from '@utils'
+import { getBucketId } from '@utils/bucket'
 import { logger } from '@utils/dev'
 import { IOS, WEB } from '@constants'
 import { fetchMediaQueue } from '../utils'
@@ -16,7 +16,7 @@ import Mono from './mono'
 import Subject from './subject'
 import Topic from './topic'
 
-import type { Fn, MonoId, ReactNode, SubjectId, TopicId } from '@types'
+import type { MonoId, ReactNode, SubjectId, TopicId } from '@types'
 import type { ACSearchArgs, MediaArgs, PassProps } from './types'
 
 /** @todo 待优化, 安卓 Text 中一定要过滤非文字节点 */
@@ -78,7 +78,10 @@ export function getACSearch({ style, passProps, params, onPress }: ACSearchArgs)
 }
 
 /** 条目媒体块 */
-export async function getSubject({ passProps, params, href, onLinkPress }: MediaArgs, render?: Fn) {
+export async function getSubject(
+  { passProps, params, href, onLinkPress }: MediaArgs,
+  render?: (el: JSX.Element) => void
+) {
   try {
     const text = getRawChildrenText(passProps)
     if (!text) return
@@ -122,17 +125,20 @@ export async function getSubject({ passProps, params, href, onLinkPress }: Media
 }
 
 /** 帖子媒体块 */
-export async function getTopic({ passProps, params, onLinkPress }: MediaArgs, render?: Fn) {
+export async function getTopic(
+  { passProps, params, onLinkPress }: MediaArgs,
+  render?: (el: JSX.Element) => void
+) {
   try {
     const text = getRawChildrenText(passProps)
     if (!text) return
 
     const topicId = params.topicId as TopicId
-    await rakuenStore.init('topic')
+    const last = getBucketId(topicId)
 
-    const last = getInt(topicId)
-    const key = `comments${last}` as const
-    await rakuenStore.init(key)
+    // 同步读取前先确保两个桶已读回 (访问器内的 init 是异步懒读, 等不到)
+    await rakuenStore.init(`comments${last}`)
+    await rakuenStore.init(`topic${last}`)
 
     const topic = rakuenStore.topic(topicId)
     if (!topic?._loaded) {

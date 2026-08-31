@@ -8,6 +8,7 @@ import { confirm, getTimestamp, info } from '@utils'
 import { syncSystemStore, syncUserStore } from '@utils/async'
 import { fetchHTML, xhr } from '@utils/fetch'
 import { collect, collectList, get, is, update } from '@utils/kv'
+import { getBucketId } from '@utils/bucket'
 import {
   API_TOPIC_COMMENT_LIKE,
   APP_ADVANCE_TRACK_COMMENT,
@@ -23,7 +24,6 @@ import Fetch from './fetch'
 import type { RakuenReplyType } from '@constants/html/types'
 import type {
   BlogId,
-  Fn,
   Id,
   RakuenAutoLoadImage,
   RakuenNewFloorStyle,
@@ -69,7 +69,7 @@ export default class Action extends Fetch {
       sub_reply_uid?: any
       post_uid?: any
     },
-    success?: Fn
+    success?: (responseText?: string, request?: XMLHttpRequest) => unknown
   ) => {
     const { topicId, type = 'group/topic', ...other } = args || {}
     xhr(
@@ -105,8 +105,8 @@ export default class Action extends Fetch {
       content: string
       formhash: string
     },
-    success?: Fn,
-    fail?: Fn
+    success?: (responseText?: string, request?: XMLHttpRequest) => unknown,
+    fail?: () => void
   ) => {
     const { postId, topicType, content, formhash } = args || {}
     xhr(
@@ -135,7 +135,7 @@ export default class Action extends Fetch {
     floorId: Id,
     formhash: string,
     topicId: TopicId | BlogId | SubjectId,
-    callback?: Fn,
+    callback?: () => void,
     userInfo?: {
       username: string
       nickname: string
@@ -148,7 +148,6 @@ export default class Action extends Fetch {
       this._doLiking = false
     }, 1600)
 
-    const STATE_KEY = 'likes'
     const ITEM_KEY = topicId
     let isOptimisticUpdated = false
 
@@ -158,7 +157,7 @@ export default class Action extends Fetch {
         const fId = String(floorId)
         const targetValue = String(item.value)
 
-        const topicLikes = JSON.parse(JSON.stringify(this[STATE_KEY](ITEM_KEY) || {}))
+        const topicLikes = JSON.parse(JSON.stringify(this.likes(ITEM_KEY) || {}))
 
         // 获取当前楼层 (floorId) 的 reactions 列表
         const currentReactions = topicLikes[fId] || {}
@@ -214,11 +213,7 @@ export default class Action extends Fetch {
         }
 
         topicLikes[fId] = currentReactions
-        this.setState({
-          [STATE_KEY]: {
-            [ITEM_KEY]: topicLikes
-          }
-        })
+        this.saveLikesBucket(ITEM_KEY, topicLikes)
         isOptimisticUpdated = true
       }
     } catch (e) {
@@ -238,25 +233,20 @@ export default class Action extends Fetch {
               let state: any
               if (data?.data) {
                 state = {
-                  ...this[STATE_KEY](ITEM_KEY),
+                  ...this.likes(ITEM_KEY),
                   ...data.data
                 }
               } else {
                 state = {
-                  ...this[STATE_KEY](ITEM_KEY),
+                  ...this.likes(ITEM_KEY),
                   [floorId]: {}
                 }
               }
 
-              this.setState({
-                [STATE_KEY]: {
-                  [ITEM_KEY]: state
-                }
-              })
-              this.save(STATE_KEY)
+              this.saveLikesBucket(ITEM_KEY, state)
             } else {
               // 虽然是乐观更新，但为了持久化，仍需 save
-              this.save(STATE_KEY)
+              this.saveLikesBucket(ITEM_KEY)
             }
 
             if (typeof callback === 'function') callback()
@@ -297,7 +287,11 @@ export default class Action extends Fetch {
   }
 
   /** 删除日志回复 */
-  doDeleteReplyBlog = async (args: { url: string }, success?: Fn, fail?: Fn) => {
+  doDeleteReplyBlog = async (
+    args: { url: string },
+    success?: (responseText?: string, request?: XMLHttpRequest) => unknown,
+    fail?: () => void
+  ) => {
     const { url } = args || {}
     xhr(
       {
@@ -313,8 +307,8 @@ export default class Action extends Fetch {
     args: {
       keyword: string
     },
-    success?: Fn,
-    fail?: Fn
+    success?: (responseText?: string, request?: XMLHttpRequest) => unknown,
+    fail?: () => void
   ) => {
     if (!this.formhash) {
       if (typeof fail === 'function') fail()
@@ -338,7 +332,11 @@ export default class Action extends Fetch {
   }
 
   /** 取消与某用户绝交 */
-  doCancelBlockUser = async (args: { url: string }, success?: Fn, fail?: Fn) => {
+  doCancelBlockUser = async (
+    args: { url: string },
+    success?: (responseText?: string, request?: XMLHttpRequest) => unknown,
+    fail?: () => void
+  ) => {
     const { url } = args || {}
     xhr(
       {
@@ -355,20 +353,17 @@ export default class Action extends Fetch {
    * @param {*} topicId 帖子Id
    * @param {Int} replies 回复数
    */
-  updateTopicReaded = (topicId: TopicId, replies: number = 0) => {
+  updateTopicReaded = async (topicId: TopicId, replies: number = 0) => {
+    // 桶可能尚未读回, 先同步 init 再读, 避免首读 time=0 误重置 _time (原首读时间)
+    await this.init(`readed${getBucketId(topicId)}`)
+
     const readed = this.readed(topicId)
-    const key = 'readed'
     const time = getTimestamp()
-    this.setState({
-      [key]: {
-        [topicId]: {
-          replies,
-          time,
-          _time: readed.time === 0 ? time : readed.time
-        }
-      }
+    this.saveReadedBucket(topicId, {
+      replies,
+      time,
+      _time: readed.time === 0 ? time : readed.time
     })
-    this.save(key)
   }
 
   /** 设置`自动加载楼层中的图片` */

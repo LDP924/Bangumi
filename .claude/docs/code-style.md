@@ -3,6 +3,11 @@
 - 一个文件没必要不超过 400 行，超了就拆
 - 嵌套没必要不要超过 4 层
 
+# 提交描述规范
+
+- 格式为 `- [功能块] xxx`（功能块如 文档 / 组件 / 重构 / 依赖 / 词云 等，取自最近提交惯例）
+- 尽量简洁，用自然语言概括改动本身，不关心代码层面细节
+
 # 注释规范
 
 - **文件头注释框：元信息之后空一行写文件职责描述**，描述紧贴 `*/` 收尾，可多行（续行与首行对齐）。新建文件一律带上；存量文件未带的不必回填，编辑该文件时顺手补即可。先例见 `src/utils/protobuf/index.ts`：
@@ -40,12 +45,13 @@
   - `ViewStyle` / `TextStyle` = `@types` 中的宽口径别名（`StyleProp<RNViewStyle>` 等），RN 原生窄型仅在 reanimated 的 `AnimatedStyle<T>` 等需要具体对象型的场景使用（可别名引入，如 `ViewStyle as RNViewStyle`）
   - 组件 `style?: ViewStyle` 用 `WithViewStyles<>` 组合；带导航参数的组件用 `WithNavigation<>`
   - children 一律用 React 的 `PropsWithChildren<>`
-- **重构时禁止使用遗留类型 `Fn` 和 `AnyObject`**（`@types` 中的历史遗留）：新代码与重构一律改用明确的具名类型（如回调签名 `(res?: unknown) => void`、具体字段结构），仅在无法确定结构的旧代码原样保留
+- **遗留类型 `Fn` 与 `AnyObject` 已从 `@types` 移除**（2026-09 清理）：禁止再使用，回调一律写具体签名（如 `() => void`、`(res?: unknown) => void`、复用 `TouchableHandlePress`），动态数据袋用 `Record<string, any>` 等内联结构
 
 # 代码风格（全局）
 
 - 所有组件统一用 `observer()` 包裹，**不使用** `useObserver` 或 `ob`
-- 不使用 React.memo / useMemo，依赖 MobX observer() 自动优化
+- 性能优化推荐依赖 MobX observer() 自动追踪，默认不手写 React.memo / useMemo
+  - store 派生数据每次渲染直接计算即可，useMemo 缓存 store 派生值可能滞留旧数据（原因见 component.md「observer 组件内不要用 useMemo 缓存 store 派生数据」）
   - **例外**：滚动密集页面的区块内容组件（见 screen.md「页面区块双组件模式」）使用项目封装的 `memo(props, DEFAULT_PROPS, COMPONENT_MAIN)` + props 驱动；此类组件内部的 useMemo 若服务于稳定引用可保留
 - useCallback 用于稳定引用
 - **`use*` 函数禁止在条件提前返回之后调用**：`if (...) return null` 之后不要再调用任何 `use*` 函数（含纯函数），避免日后函数内引入真实 hook 时触发 Rules of Hooks 崩溃。提前返回应放在所有 `use*` 调用之后
@@ -55,8 +61,7 @@
 
 # React Native 规范
 
-- **触摸事件必须在同步代码中提取数据**：React Native 的触摸事件（如 `onTouchMove`、`onTouchStart`、`onTouchEnd`）使用合成事件（Synthetic Event），事件对象会被重用和回收。如果在 `requestAnimationFrame`、`setTimeout`、`Promise` 等异步回调中访问 `e.nativeEvent.touches`，事件对象可能已被回收导致 `Cannot read property 'touches' of null` 错误。
-  - ✅ 正确：在同步代码中提取所需数据，然后在异步回调中使用提取的数据
+- **触摸事件必须在同步代码中提取数据**：RN 触摸事件（`onTouchMove` 等）的合成事件对象会被重用回收，在 `requestAnimationFrame` / `setTimeout` / `Promise` 等异步回调中访问 `e.nativeEvent.touches` 会得到 `null`。先同步提取，再进异步回调：
   ```typescript
   const handleTouchMove = useCallback((e: any) => {
     const touch = e.nativeEvent?.touches?.[0]
@@ -64,15 +69,7 @@
     const { pageX, pageY } = touch  // 同步提取
 
     requestAnimationFrame(() => {
-      // 使用已提取的 pageX, pageY
-    })
-  }, [])
-  ```
-  - ❌ 错误：在异步回调中直接访问事件对象
-  ```typescript
-  const handleTouchMove = useCallback((e: any) => {
-    requestAnimationFrame(() => {
-      const touch = e.nativeEvent?.touches?.[0]  // 事件可能已被回收
+      // 使用已提取的 pageX, pageY（此处再读 e.nativeEvent 已被回收）
     })
   }, [])
   ```
