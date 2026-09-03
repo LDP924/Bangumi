@@ -163,15 +163,22 @@ jest.mock('@utils/async', () => ({ syncUserStore: jest.fn() }), { virtual: true 
 
 jest.mock('@utils/thirdParty', () => ({ axios: jest.fn() }), { virtual: true })
 
-jest.mock('@utils/crypto', () => ({ default: { get: () => [] } }), { virtual: true })
+// 同时提供 default 与命名导出, constants/cdn/ds.ts 等消费方使用 import { get } 命名导入;
+// 返回 JSON 字符串 '[]', 兼容 constants/model/news.ts 的 JSON.parse(get(...)) 用法
+jest.mock('@utils/crypto', () => ({
+  __esModule: true,
+  default: { get: () => '[]', set: () => '' },
+  get: () => '[]',
+  set: () => ''
+}))
 
 jest.mock('@assets/json', () => ({ loadJSON: jest.fn() }))
 
 jest.mock(
   '@stores',
   () => {
-    // mutable cell for dynamic homeSortSink
-    const state = { homeSortSink: false }
+    // mutable cell for dynamic homeSortSink / uiStore.isScrolling
+    const state = { homeSortSink: false, isScrolling: false }
     global.__mockStoreState__ = state
     return {
       systemStore: {
@@ -182,12 +189,29 @@ jest.mock(
           }
         }
       },
+      uiStore: {
+        get isScrolling() {
+          return global.__mockStoreState__.isScrolling
+        },
+        setScrolling: jest.fn()
+      },
       userStore: {
         userProgress: () => ({})
       },
       _: {
         r: v => v,
-        window: { width: 375, height: 812 }
+        window: { width: 375, height: 812 },
+        // 与 src/stores/theme/action.ts 真实实现语义一致 (测试环境 PAD 未定义恒为手机)
+        device: (mobileValue, padValue) => mobileValue,
+        // 与 src/stores/theme/computed.ts 一致: create 即 StyleSheet.create
+        create: styles => styles,
+        absoluteFill: {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0
+        }
       }
     }
   },
@@ -246,7 +270,11 @@ jest.mock(
       MODEL_RAKUEN_TYPE: model('全部'),
       D: 86400,
       D3: 259200,
-      D7: 604800
+      D7: 604800,
+
+      // barrel 导出的埋点事件表; 消费方 (web-view log detail 等) 会在模块顶层
+      // 对它做 Object.entries, 缺失会得到 undefined 并抛错, 故提供空对象兜底
+      EVENTS: {}
     }
   },
   { virtual: true }

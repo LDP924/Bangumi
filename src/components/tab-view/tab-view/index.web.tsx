@@ -14,7 +14,7 @@ import Pager from 'react-native-tab-view/src/Pager'
 import TabBar from 'react-native-tab-view/src/TabBar'
 import { uiStore } from '@stores'
 import { stl } from '@utils/utils'
-import { IOS } from '@constants/constants'
+import { IOS } from '@constants/env'
 import SceneView from '../scene-view'
 
 import type { LayoutChangeEvent, StyleProp, ViewStyle } from 'react-native'
@@ -172,7 +172,7 @@ class TabView<T extends Route> extends React.Component<Props<T>, State> {
           springVelocityScale,
           removeClippedSubviews,
           gestureHandlerProps,
-          children: ({ position, render, addListener, removeListener, jumpTo }) => {
+          children: ({ position, render, addEnterListener, jumpTo }) => {
             // All of the props here must not change between re-renders
             // This is crucial to optimizing the routes with PureComponent
             const sceneRendererProps = {
@@ -198,8 +198,7 @@ class TabView<T extends Route> extends React.Component<Props<T>, State> {
                   routes.map((route, i) => (
                     <SceneView
                       {...sceneRendererProps}
-                      addListener={addListener}
-                      removeListener={removeListener}
+                      addEnterListener={addEnterListener}
                       key={route.key}
                       index={i}
                       lazy={lazy}
