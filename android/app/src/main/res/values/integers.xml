@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  [切页动画] 时长常量 (单位: 毫秒)
+
+  三档口径 (改这一个数值就能整组换档, 11 个 anim 文件都引用它):
+    - 快 = 200  (= AOSP 的 @android:integer/config_shortAnimTime)
+    - 中 = 300  (当前使用; 介于系统 short / medium 之间的折中值, 不是系统常量)
+    - 慢 = 400  (= AOSP 的 @android:integer/config_mediumAnimTime, 即分支修改前的水平/垂直节奏)
+
+  参考 (本机 SDK platforms/android-30 ~ 36 的 framework config.xml 原值):
+    config_shortAnimTime = 200, config_mediumAnimTime = 400, config_longAnimTime = 500
+    分支修改前第三项「居中缩放」还不是这个时长: Android 13+ 走库内 anim-v33 硬编码 450ms,
+    Android 12 及以下是 100ms 淡入 + 200ms 位移。
+
+  注意:
+  1. 不要单独改某一个 anim 文件, 配对的两屏会脱节 (出现 "一屏已停稳, 转场还没结束" 的顿挫);
+  2. 该值会继续被系统 "动画时长缩放" 乘积 (Animation.getScale()), 系统把动画关掉时会正常跳过,
+     所以调快调慢不会绕过无障碍设置;
+  3. 这里写定数值而不是引用系统常量, 因为厂商 ROM 可能 overlay 掉系统值; 想严格跟随系统,
+     把下面的值换成 @android:integer/config_shortAnimTime 或 config_mediumAnimTime 即可 (只改这一处)。
+-->
+<resources>
+    <integer name="transition_duration">300</integer>
+</resources>

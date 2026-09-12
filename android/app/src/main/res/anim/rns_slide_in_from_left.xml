@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 react-native-screens 的同名动画资源。水平切换时返回方向的下层页归位。
+
+  内容 = 库内原版, 时长引用 @integer/transition_duration;
+  必须与 rns_slide_out_to_right 同时长, 位移保持 -100%。
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromXDelta="-100%"
+    android:toXDelta="0%" />

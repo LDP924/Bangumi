@@ -28,13 +28,6 @@ export const memoStyles = _.memoStyles(() => ({
     height: 20,
     marginBottom: -2
   },
-  pageScale: {
-    transform: [
-      {
-        scale: 1.12
-      }
-    ]
-  },
   pageCurrent: {
     zIndex: 2,
     transform: [
@@ -44,16 +37,9 @@ export const memoStyles = _.memoStyles(() => ({
     ],
     opacity: 0.5
   },
-  pageScaleCurrent: {
-    position: 'absolute',
-    zIndex: 2,
-    top: 6,
-    left: 0,
-    transform: [
-      {
-        scale: 0.76
-      }
-    ],
-    opacity: 0.5
+  /** 渐变: 半透明页面右移叠在静止页面之上, 表示从右滑入的同时渐显 */
+  pageSlideFade: {
+    marginLeft: -14,
+    opacity: 0.45
   }
 }))

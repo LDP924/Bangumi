@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 命名与行为不一致, 不要被文件名误导:
+
+  覆盖的是 react-native-screens 的 "fade_from_bottom" 槽位资源, 实际承担设置里第三项「渐变」的
+  **返回·下层页 (要回到的那一页)**: 完全静止 —— 不位移, 也不淡化, 只是一个保证同时结束的占位。
+
+  为什么必须完全不动: 返回时当前页在上层向右滑出并淡出, 这页就是它背后的底衬;
+  只有保持不透明, 当前页淡出过程中露出的才是内容而不是窗口底色 (见 rns_no_animation_350.xml 的说明)。
+
+  必须与 rns_fade_to_bottom 同时长 (@integer/transition_duration)。
+-->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromAlpha="1.0"
+    android:toAlpha="1.0" />

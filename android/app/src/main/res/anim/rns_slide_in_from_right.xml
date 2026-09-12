@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 react-native-screens 的同名动画资源 (app 侧同名资源优先级高于依赖库, 改这里不影响 node_modules)
+
+  内容 = 库内原版: 位移 100%, 不写 interpolator 让 framework 回落 AccelerateDecelerateInterpolator。
+  这是试过 Material 插值器 (fast_out_slow_in / linear_out_slow_in) 之后回退到的版本, 不要再往这条曲线上加插值器。
+
+  与库内原版的唯一差别是时长: 统一引用 @integer/transition_duration (三档见 res/values/integers.xml),
+  只解决 "原版太慢" 的问题。时长仍会被系统 "动画时长缩放" 乘积。
+
+  前进时旧页出场 (rns_slide_out_to_left) 必须与本文件同时长, 两屏才像一整块内容连续平移;
+  位移必须保持 100%: 前后两屏严丝合缝拼接, 改成视差 (例如 -25%) 两屏会大面积重叠,
+  而 ScreenStack 的 needsDrawReordering 只覆盖 slide_from_bottom / fade_from_bottom,
+  返回方向会把正在滑入的页面盖住 (花屏)。
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromXDelta="100%"
+    android:toXDelta="0%" />

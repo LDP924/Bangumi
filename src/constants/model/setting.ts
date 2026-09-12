@@ -6,7 +6,6 @@
  *
  * 字典 - 设置 / 时区
  */
-import { IOS } from '../env'
 import { Model } from './utils'
 
 export const SETTING_HOME_LAYOUT = [
@@ -230,7 +229,7 @@ export const SETTING_TRANSITION = [
     value: 'vertical'
   },
   {
-    label: IOS ? '渐变' : '居中缩放',
+    label: '渐变',
     value: 'scale'
   }
 ] as const
