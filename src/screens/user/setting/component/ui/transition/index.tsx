@@ -77,9 +77,9 @@ function Transition({ filter }: WithFilterProps) {
       </ItemSettingBlock.Item>
 
       <ItemSettingBlock.Item style={_.ml.md} {...genItemProps('scale')}>
-        <Flex style={styles.container} direction='column' justify='center'>
-          <View style={[styles.page, styles.pageScale]} />
-          <View style={[styles.page, styles.pageScaleCurrent]} />
+        <Flex style={styles.container} justify='center'>
+          <View style={styles.page} />
+          <View style={[styles.page, styles.pageSlideFade]} />
         </Flex>
       </ItemSettingBlock.Item>
 

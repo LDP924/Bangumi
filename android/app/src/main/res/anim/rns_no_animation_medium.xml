@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 react-native-screens 的同名动画资源。这是 "垂直" 转场里旧页的静止占位 (alpha 1→1),
+  目的是让两屏在同一个时间点结束。
+
+  必须与 rns_slide_in_from_bottom / rns_slide_out_to_bottom 的时长完全一致 (@integer/transition_duration),
+  改时长时三个文件一起改。
+-->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromAlpha="1.0"
+    android:toAlpha="1.0" />

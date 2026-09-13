@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 命名与行为不一致, 不要被文件名误导:
+
+  覆盖的是 react-native-screens 的 "fade_from_bottom" 槽位资源, 实际承担设置里第三项「渐变」的
+  **前进·当前页 (留在原地的那一页)**: 完全静止 —— 不位移, 也不淡化, 只是一个保证同时结束的占位。
+
+  为什么必须完全不动: 它是新页淡入时的底衬。ScreenStack 对 FADE_FROM_BOTTOM 会做绘制顺序反转
+  (ScreenStack.kt:165-177 / :255-265 / :288-290), 让旧页在新页之下; 新页从右侧滑入并渐显时,
+  背后始终是这页不透明的旧内容, 所以不会露出窗口底色。
+  一旦给它加 translate (滑走) 或 alpha (淡化), 透明区域背后就空了, 会露出 AppTheme 的
+  android:windowBackground -> @color/splashscreen_background, 它在 values-night 里是 #000000,
+  而且主题是 DayNight (跟随系统深色模式), 所以「白天主题」下也会闪出刺眼的黑色。
+
+  必须与 rns_fade_from_bottom 同时长 (@integer/transition_duration)。
+-->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromAlpha="1.0"
+    android:toAlpha="1.0" />

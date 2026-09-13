@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 react-native-screens 的同名动画资源。转场设置 "垂直" 时的新页入场。
+
+  内容 = 库内原版 (位移 100%, 不写 interpolator), 时长引用 @integer/transition_duration。
+
+  配对的是 rns_no_animation_medium (旧页静止占位), 两者时长必须完全一致,
+  否则会出现 "新页已经停稳, 转场还没结束" 的顿挫 —— 改时长时两个文件一起改。
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="@integer/transition_duration"
+    android:fromYDelta="100%"
+    android:toYDelta="0%" />

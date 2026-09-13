@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 命名与行为不一致, 不要被文件名误导:
+
+  覆盖的是 react-native-screens 的 "fade_from_bottom" 槽位资源, 实际承担设置里第三项「渐变」的
+  **返回·退出页 (当前页)**: 向右滑出 (0 → 100%) 的同时淡出 (alpha 1 → 0)。
+
+  可以放心淡到全透明: 返回时不做绘制顺序反转, Android 默认把正在消失的这页画在上层,
+  它背后是「完全静止且不透明」的下层页 (rns_no_animation_250), 所以淡出过程露出的是下层内容, 不是窗口底色。
+  toAlpha 就是渐隐强度的开关: 改成 0.4 会让消失得更含蓄, 改成 1.0 等于只滑动不渐变。
+
+  必须与 rns_no_animation_250 同时长 (@integer/transition_duration)。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <translate
+        android:duration="@integer/transition_duration"
+        android:fromXDelta="0%"
+        android:toXDelta="100%" />
+    <alpha
+        android:duration="@integer/transition_duration"
+        android:fromAlpha="1.0"
+        android:toAlpha="0.0" />
+</set>

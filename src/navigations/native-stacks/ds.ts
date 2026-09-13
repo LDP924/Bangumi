@@ -38,6 +38,16 @@ export const ANIMATIONS = {
   horizontal: 'slide_from_right',
   vertical: 'slide_from_bottom',
 
-  /** iOS 没有居中缩放, 使用渐变代替 */
-  scale: IOS ? 'fade' : 'default'
+  /**
+   * 第三项 (渐变): 安卓 = 右→左滑动 + 新页渐显 (无缩放)
+   *
+   * 为什么借 'fade_from_bottom': 它对应的一组资源 (rns_fade_from_bottom / rns_no_animation_350 /
+   * rns_no_animation_250 / rns_fade_to_bottom) 在 ScreenStack.kt 里角色正交, 且没有别的动画类型使用,
+   * 四个方向刚好能各自定义 (覆盖见 android/app/src/main/res/anim/)。
+   * - 'fade' 不行: open / close 复用同一对资源, 表达不了方向差异
+   * - 'default' 不行: 库内 res/v33/anim-v33 有 API33+ 变体, app 侧 res/anim 的覆盖对其无效
+   *
+   * iOS 保持原样 (原生 fade)
+   */
+  scale: IOS ? 'fade' : 'fade_from_bottom'
 } as const

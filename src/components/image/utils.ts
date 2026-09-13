@@ -274,9 +274,9 @@ export function removeLocalCache(src: string) {
   memoLocal.delete(hash(src))
 }
 
-/** 指数退避重试间隔, 上限 1 小时 */
+/** 指数退避重试间隔 (首次 1s, 逐次翻倍), 上限 1 小时 */
 export function getNextRetryDelay(attempt: number) {
-  return Math.min(3000 * Math.pow(2, attempt), 3600000)
+  return Math.min(1000 * Math.pow(2, attempt), 3600000)
 }
 
 /**

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 命名与行为不一致, 不要被文件名误导:
+
+  这里覆盖的是 react-native-screens 的 "fade_from_bottom" 槽位资源, 但它已经不再表达 "从下淡入",
+  而是承担设置里第三项「渐变」的 **前进·进入页 (新页)**: 从右向左滑入 (100% → 0) 同时渐显 (alpha 0 → 1)。
+
+  为什么借这个槽位: ScreenStack.kt 里每个 StackAnimation 对应一组固定资源,
+  FADE_FROM_BOTTOM 的 4 个资源 (rns_fade_from_bottom / rns_no_animation_350 / rns_no_animation_250 / rns_fade_to_bottom)
+  角色正交且没有任何其它动画类型使用, 刚好承载第三项的四个方向。
+  (FADE 在 open/close 复用同一对资源, 表达不了方向; DEFAULT 在库内 res/v33/anim-v33 有 API33+ 变体, app 覆盖对其无效。)
+
+  观感结构 (QQ 式叠层): 当前页完全静止 (rns_no_animation_350), 只有这页滑动并渐显;
+  ScreenStack 对 FADE_FROM_BOTTOM 会反转绘制顺序, 让旧页在这页之下,
+  所以淡入过程中背后始终是那页不透明的旧内容, 不会露出窗口底色 (深色模式下是黑色)。
+
+  时长引用 @integer/transition_duration, 必须与 rns_no_animation_350 一致。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <translate
+        android:duration="@integer/transition_duration"
+        android:fromXDelta="100%"
+        android:toXDelta="0%" />
+    <alpha
+        android:duration="@integer/transition_duration"
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0" />
+</set>
