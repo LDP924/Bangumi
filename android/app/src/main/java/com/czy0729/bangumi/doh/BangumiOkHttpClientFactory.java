@@ -1,6 +1,7 @@
 package com.czy0729.bangumi.doh;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.facebook.react.modules.network.OkHttpClientFactory;
@@ -21,6 +22,7 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLContext;
@@ -30,6 +32,8 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 import okhttp3.Cache;
+import okhttp3.ConnectionPool;
+import okhttp3.Dispatcher;
 import okhttp3.OkHttpClient;
 
 /**
@@ -133,7 +137,17 @@ public class BangumiOkHttpClientFactory implements OkHttpClientFactory {
 
         // Use a selector that dynamically checks proxy port
         // This way, when EchProxy starts, new connections automatically go through it
+        // 显式化并发与连接复用参数 (默认 maxRequestsPerHost=5 / 连接池 5 idle 5 分钟)
+        // 注意: Dispatcher 的上限只作用于异步 enqueue (JS fetch/XHR 批量接口), Glide 图片走同步
+        // execute() 不受此限, 因此这里主要让接口请求更快拿到图片地址, 而非直接提升图片并发
+        Dispatcher dispatcher = new Dispatcher();
+        dispatcher.setMaxRequests(64);
+        dispatcher.setMaxRequestsPerHost(10);
+
         okhttp3.OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .dispatcher(dispatcher)
+                .connectionPool(new ConnectionPool(6, 5, TimeUnit.MINUTES))
+                // readTimeout 保持 15s 不变: 排队时长靠代理侧优化收敛, 不放宽失败判定
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(20, TimeUnit.SECONDS)
@@ -185,9 +199,13 @@ public class BangumiOkHttpClientFactory implements OkHttpClientFactory {
                         String fullPath = request.url().encodedPath();
                         String query = request.url().encodedQuery();
                         String fullUrl = fullPath + (query != null ? "?" + query : "");
-                        String ip = getCachedIp(host);
-                        Log.d(TAG, host + fullUrl + " -> proxy -> " + ip);
-                        EchProxyModule.addLog("info", "connect", host + fullUrl + " -> " + ip);
+                        // info 日志按 host+path 节流 (不含 query): 图片 URL 的 query 常唯一,
+                        // 带 query 会让节流失效并把节流表迅速撑到上限 (error 不节流)
+                        if (shouldLog(host + fullPath)) {
+                            String ip = getCachedIp(host);
+                            Log.d(TAG, host + fullUrl + " -> proxy -> " + ip);
+                            EchProxyModule.addLog("info", "connect", host + fullUrl + " -> " + ip);
+                        }
                     }
                     try {
                         return chain.proceed(request);
@@ -272,7 +290,39 @@ public class BangumiOkHttpClientFactory implements OkHttpClientFactory {
         }
     }
 
+    /** target_ips.txt 的 IP 内存缓存: host -> ip, 避免每个请求都同步读磁盘 */
+    private static final long IP_CACHE_TTL_MS = 60 * 1000;
+
+    private static class IpCacheEntry {
+        final String ip;
+        final long createdAt;
+
+        IpCacheEntry(String ip) {
+            this.ip = ip;
+            this.createdAt = SystemClock.elapsedRealtime();
+        }
+
+        boolean isExpired() {
+            return SystemClock.elapsedRealtime() - createdAt > IP_CACHE_TTL_MS;
+        }
+    }
+
+    private static final ConcurrentHashMap<String, IpCacheEntry> IP_CACHE = new ConcurrentHashMap<>();
+
+    /** 获取 host 当前缓存 IP (内存优先, 60s TTL) */
     private static String getCachedIp(String hostname) {
+        IpCacheEntry cached = IP_CACHE.get(hostname);
+        if (cached != null && !cached.isExpired()) {
+            return cached.ip;
+        }
+
+        String ip = readCachedIpFromDisk(hostname);
+        IP_CACHE.put(hostname, new IpCacheEntry(ip));
+        return ip;
+    }
+
+    /** 从 EchProxy 的 target_ips.txt 读取 IP (仅在内存缓存未命中时调用) */
+    private static String readCachedIpFromDisk(String hostname) {
         try {
             // Try to get cache dir from DoHDNS instance (which has EchProxy cache)
             File echCacheDir = DoHDNS.getInstance().getEchProxyCacheDir();
@@ -296,5 +346,24 @@ public class BangumiOkHttpClientFactory implements OkHttpClientFactory {
         } catch (Exception ignored) {
         }
         return "unknown";
+    }
+
+    /** info 日志节流: key -> 上次记录时间 */
+    private static final long LOG_THROTTLE_MS = 1000;
+    private static final int LOG_THROTTLE_MAX_KEYS = 256;
+    private static final ConcurrentHashMap<String, Long> LOG_THROTTLE = new ConcurrentHashMap<>();
+
+    /** 同一 key 1s 内只允许记录一条 info 日志 */
+    private static boolean shouldLog(String key) {
+        long now = SystemClock.elapsedRealtime();
+        Long last = LOG_THROTTLE.get(key);
+        if (last != null && now - last < LOG_THROTTLE_MS) {
+            return false;
+        }
+        if (LOG_THROTTLE.size() >= LOG_THROTTLE_MAX_KEYS) {
+            LOG_THROTTLE.clear();
+        }
+        LOG_THROTTLE.put(key, now);
+        return true;
     }
 }

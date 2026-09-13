@@ -254,13 +254,14 @@ describe('computeHeaders', () => {
 
 describe('getNextRetryDelay', () => {
   it('指数增长', () => {
-    expect(getNextRetryDelay(0)).toBe(3000)
-    expect(getNextRetryDelay(1)).toBe(6000)
-    expect(getNextRetryDelay(10)).toBe(3072000)
+    expect(getNextRetryDelay(0)).toBe(1000)
+    expect(getNextRetryDelay(1)).toBe(2000)
+    expect(getNextRetryDelay(10)).toBe(1024000)
+    expect(getNextRetryDelay(11)).toBe(2048000)
   })
 
   it('上限封顶 1 小时', () => {
-    expect(getNextRetryDelay(11)).toBe(3600000)
+    expect(getNextRetryDelay(12)).toBe(3600000)
     expect(getNextRetryDelay(20)).toBe(3600000)
   })
 })

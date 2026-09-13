@@ -26,6 +26,43 @@ warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 err() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 
 # ============================================================
+# 校验 OpenSSL 是否为多线程构建
+#
+# OpenSSL 4.0 的 Configure 对 `-static` 会隐式执行
+# disable('static', 'pic', 'threads'), 使 libcrypto 以单线程 (no-threads) 编译:
+# 所有内部锁/原子操作变成空实现, 多线程并发使用 (代理每个连接一个线程) 会
+# 破坏 provider 内部状态并触发 SIGSEGV。
+#
+# 判定方式: threads_pthread.o (受 OPENSSL_THREADS 保护的实现) 是否有符号输出。
+# ============================================================
+verify_openssl_threads() {
+    local LIB="$1"
+    local TOOLCHAIN_BIN="$2"
+    local OBJ="libcrypto-lib-threads_pthread.o"
+    local AR_BIN="$TOOLCHAIN_BIN/llvm-ar"
+    local NM_BIN="$TOOLCHAIN_BIN/llvm-nm"
+    local TMP_DIR
+    TMP_DIR="$(mktemp -d)"
+
+    # 必须显式用 NDK 的 llvm 工具链, 不能回退到系统 ar/nm:
+    # macOS 自带 ar 解析不了 ELF 归档 (报 not found in archive), 会得到假阴性并中止构建
+    if [ ! -x "$AR_BIN" ] || [ ! -x "$NM_BIN" ]; then
+        warn "NDK 工具链缺少 llvm-ar/llvm-nm: $TOOLCHAIN_BIN"
+        rm -rf "$TMP_DIR"
+        return 2
+    fi
+
+    if ! (cd "$TMP_DIR" && "$AR_BIN" x "$LIB" "$OBJ" 2>/dev/null) \
+        || ! "$NM_BIN" --defined-only "$TMP_DIR/$OBJ" 2>/dev/null | grep -q "CRYPTO_THREAD_write_lock"; then
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+
+    rm -rf "$TMP_DIR"
+    return 0
+}
+
+# ============================================================
 # 1. 检查/安装 Rust
 # ============================================================
 setup_rust() {
@@ -67,8 +104,12 @@ setup_ndk() {
     export ANDROID_NDK_ROOT="$NDK_DIR"
 
     # 添加 NDK 工具链到 PATH (用于编译 OpenSSL)
-    local TOOLCHAIN="$NDK_DIR/toolchains/llvm/prebuilt/darwin-x86_64/bin"
-    export PATH="$TOOLCHAIN:$PATH"
+    local TOOLCHAIN_BIN
+    TOOLCHAIN_BIN="$(ls -d "$NDK_DIR"/toolchains/llvm/prebuilt/*/bin 2>/dev/null | head -1)"
+    if [ -z "$TOOLCHAIN_BIN" ]; then
+        err "NDK 工具链未找到: $NDK_DIR/toolchains/llvm/prebuilt/*/bin"
+    fi
+    export PATH="$TOOLCHAIN_BIN:$PATH"
 
     log "NDK: $NDK_DIR"
 }
@@ -87,16 +128,28 @@ build_openssl() {
     local OPENSSL_SRC="$OPENSSL_BUILD/openssl-$OPENSSL_VERSION"
     local ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
     local NDK_DIR="$ANDROID_HOME/ndk/$NDK_VERSION"
-    local TOOLCHAIN="$NDK_DIR/toolchains/llvm/prebuilt/darwin-x86_64"
+    local TOOLCHAIN
     local API_LEVEL=21
 
-    if [ -f "$OPENSSL_INSTALL/lib/libssl.a" ]; then
-        log "OpenSSL 已编译, 跳过"
+    # host 目录名随 NDK 版本/主机架构变化 (darwin-x86_64 / darwin-arm64 ...), 按实际存在值取
+    TOOLCHAIN="$(ls -d "$NDK_DIR"/toolchains/llvm/prebuilt/* 2>/dev/null | head -1)"
+    if [ -z "$TOOLCHAIN" ]; then
+        err "NDK 工具链未找到: $NDK_DIR/toolchains/llvm/prebuilt/*"
+    fi
+
+    # 只有带 threads 校验标记的产物才可复用
+    if [ -f "$OPENSSL_INSTALL/lib/libssl.a" ] && [ -f "$OPENSSL_INSTALL/.threads-ok" ]; then
+        log "OpenSSL 已编译 (threads 已启用), 跳过"
         export OPENSSL_DIR="$OPENSSL_INSTALL"
         export OPENSSL_INCLUDE_DIR="$OPENSSL_INSTALL/include"
         export OPENSSL_LIB_DIR="$OPENSSL_INSTALL/lib"
         export OPENSSL_STATIC=1
         return
+    fi
+
+    if [ -f "$OPENSSL_INSTALL/lib/libssl.a" ]; then
+        warn "检测到旧的 OpenSSL 产物 (可能是 no-threads 构建), 删除后重新编译"
+        rm -rf "$OPENSSL_INSTALL"
     fi
 
     # 检查源码是否存在, 不存在则询问是否下载
@@ -123,15 +176,35 @@ build_openssl() {
     cd "$OPENSSL_SRC"
 
     # 配置交叉编译
+    #
+    # 注意: 这里不能传 -static。OpenSSL 4.0 的 Configure 视 -static 为 LDFLAGS,
+    # 会隐式 disable('static', 'pic', 'threads') (且位于用户参数解析之后, 显式写
+    # threads 也会被覆盖), 结果是 libcrypto 以单线程 (no-threads) 编译、所有内部锁
+    # 变成空操作, 多线程代理并发使用 OpenSSL 时必崩 (SSL_CTX_new_ex → SIGSEGV)。
+    # 静态库能力由 no-shared 保证 (配合 OPENSSL_STATIC=1 静态链接进 libechproxy.so)。
     ./Configure android-arm64 -D__ANDROID_API__=$API_LEVEL \
         --prefix="$OPENSSL_INSTALL" \
         --openssldir="$OPENSSL_INSTALL" \
         no-shared \
-        no-tests \
-        -static
+        no-tests
+
+    # 清掉可能残留的旧编译产物, 避免沿用旧配置编译出的目标文件
+    make clean >/dev/null 2>&1 || true
 
     make -j$(sysctl -n hw.ncpu)
     make install_sw
+
+    # 产物自检: 单线程构建的 OpenSSL 会让 ECH 代理随机闪崩, 直接失败退出
+    local VERIFY_RC=0
+    verify_openssl_threads "$OPENSSL_INSTALL/lib/libcrypto.a" "$TOOLCHAIN/bin" || VERIFY_RC=$?
+    if [ "$VERIFY_RC" -eq 2 ]; then
+        err "NDK 工具链缺少 llvm-ar/llvm-nm, 无法校验 OpenSSL 产物: $TOOLCHAIN/bin"
+    elif [ "$VERIFY_RC" -ne 0 ]; then
+        err "OpenSSL 编译产物缺少多线程支持 (no-threads), 会导致代理并发崩溃, 请检查 Configure 参数"
+    fi
+
+    touch "$OPENSSL_INSTALL/.threads-ok"
+    log "OpenSSL 多线程支持校验通过"
 
     export OPENSSL_DIR="$OPENSSL_INSTALL"
     export OPENSSL_INCLUDE_DIR="$OPENSSL_INSTALL/include"

@@ -9,7 +9,7 @@ use std::time::Instant;
 use foreign_types_shared::ForeignType;
 #[cfg(has_ech)]
 use foreign_types_shared::ForeignTypeRef;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 
 // Android logging
 #[cfg(target_os = "android")]
@@ -210,10 +210,35 @@ const IP_CACHE_TTL_SECS: u64 = 300; // 5 minutes
 const ECH_CONFIG_TTL_SECS: u64 = 3600; // 1 hour
 const CF_IPS_TTL_SECS: u64 = 3600; // 1 hour
 
+/// IP 缓存过期后仍可继续使用的上限 (stale-while-revalidate), 超过则必须同步解析
+const IP_STALE_MAX_SECS: u64 = 1800; // 30 minutes
+
+/// ECH config 获取失败后的退避窗口, 避免周期性对全部 CF IP 重复尝试
+const ECH_FAIL_BACKOFF_SECS: u64 = 60;
+
+/// 刷新占用标记: Drop 时把 host 从 refreshing 集合中移除
+///
+/// 用 RAII 而不是「任务结尾手动 remove」: 后台任务 panic 展开时也会执行 Drop,
+/// 否则该 host 会被永久标记为「刷新中」, 之后再也拿不到后台刷新。
+struct RefreshingGuard {
+    cache: Arc<EchCache>,
+    host: String,
+}
+
+impl Drop for RefreshingGuard {
+    fn drop(&mut self) {
+        self.cache.refreshing.lock().remove(&self.host);
+    }
+}
+
 struct EchCache {
     config: Mutex<Option<CacheEntry<Vec<u8>>>>,
     cf_ips: Mutex<Option<CacheEntry<Vec<Ipv4Addr>>>>,
     ips: Mutex<std::collections::HashMap<String, CacheEntry<Vec<Ipv4Addr>>>>,
+    /// 正在后台刷新的 host (单飞, 避免刷新任务堆积)
+    refreshing: Mutex<std::collections::HashSet<String>>,
+    /// ECH config 上次获取失败时间 (退避用)
+    ech_fail_at: Mutex<Option<Instant>>,
     dns_servers: Vec<String>,
     cache_dir: PathBuf,
 }
@@ -234,6 +259,8 @@ impl EchCache {
             config: Mutex::new(None),
             cf_ips: Mutex::new(None),
             ips: Mutex::new(std::collections::HashMap::new()),
+            refreshing: Mutex::new(std::collections::HashSet::new()),
+            ech_fail_at: Mutex::new(None),
             dns_servers,
             cache_dir: cache_path,
         };
@@ -313,6 +340,7 @@ impl EchCache {
     /// Save target IPs to disk
     fn save_target_ips(&self) {
         let path = self.cache_dir.join("target_ips.txt");
+        let tmp = self.cache_dir.join("target_ips.txt.tmp");
         let cache = self.ips.lock();
         let text: String = cache.iter()
             .map(|(host, entry)| {
@@ -324,7 +352,9 @@ impl EchCache {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        if let Err(e) = std::fs::write(&path, text) {
+        // 先写临时文件再原子改名: 后台刷新期间 Java 侧 (DoHDNS / getCachedIp) 会读该文件,
+        // 直接覆盖写有概率被读到写了一半的内容
+        if let Err(e) = std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)) {
             log_e!("Failed to save target IPs: {}", e);
         } else {
             log_d!("Saved {} target IP entries", cache.len());
@@ -341,12 +371,29 @@ impl EchCache {
                 }
             }
         }
+
+        // 退避窗口内不再对全部 CF IP 重新尝试: 有旧 config 就继续用, 否则快速失败
+        {
+            let fail_at = *self.ech_fail_at.lock();
+            if let Some(at) = fail_at {
+                if at.elapsed().as_secs() < ECH_FAIL_BACKOFF_SECS {
+                    let cache = self.config.lock();
+                    if let Some(entry) = &*cache {
+                        log_d!("ECH config refresh in backoff, keep stale config");
+                        return Ok(entry.value.clone());
+                    }
+                    return Err(io::Error::new(io::ErrorKind::Other, "ECH config backoff"));
+                }
+            }
+        }
+
         for ip in self.cloudflare_doh_ips()? {
             match grease_ech(ip) {
                 Ok(c) => {
                     log_d!("ECH GREASE succeeded via {ip}, {} bytes", c.len());
                     self.save_ech_config(&c);
                     *self.config.lock() = Some(CacheEntry { value: c.clone(), created: Instant::now() });
+                    *self.ech_fail_at.lock() = None;
                     return Ok(c);
                 }
                 Err(e) => {
@@ -354,21 +401,41 @@ impl EchCache {
                 }
             }
         }
+
+        *self.ech_fail_at.lock() = Some(Instant::now());
         Err(io::Error::new(io::ErrorKind::Other, "all CF DoH IPs failed for GREASE"))
     }
 
     /// Get target IPs for a host (multiple, filtered to CF IPs only)
-    fn get_target_ips(&self, host: &str) -> io::Result<Vec<Ipv4Addr>> {
-        // Check cache with TTL
+    ///
+    /// 未过期直接返回; 过期但在 stale 窗口内先返回旧值并触发后台单飞刷新
+    /// (stale-while-revalidate), 只有完全没有可用缓存时才同步解析, 避免刷新阻塞请求。
+    fn get_target_ips(self: &Arc<Self>, host: &str) -> io::Result<Vec<Ipv4Addr>> {
+        let mut stale: Option<Vec<Ipv4Addr>> = None;
         {
             let cache = self.ips.lock();
             if let Some(entry) = cache.get(host) {
-                if entry.created.elapsed().as_secs() < IP_CACHE_TTL_SECS {
+                let age = entry.created.elapsed().as_secs();
+                if age < IP_CACHE_TTL_SECS {
                     return Ok(entry.value.clone());
+                }
+                if age < IP_STALE_MAX_SECS {
+                    stale = Some(entry.value.clone());
                 }
             }
         }
 
+        if let Some(ips) = stale {
+            log_d!("{host} -> {:?} (stale, refresh in background)", ips);
+            self.spawn_refresh(host);
+            return Ok(ips);
+        }
+
+        self.refresh_target_ips(host)
+    }
+
+    /// 同步解析并写入缓存
+    fn refresh_target_ips(&self, host: &str) -> io::Result<Vec<Ipv4Addr>> {
         let mut ips = self.resolve_via_ech_multi(host)?;
         let original_len = ips.len();
         ips.retain(|ip| is_cloudflare_ip(*ip));
@@ -382,6 +449,36 @@ impl EchCache {
         self.ips.lock().insert(host.to_string(), CacheEntry { value: ips.clone(), created: Instant::now() });
         self.save_target_ips();
         Ok(ips)
+    }
+
+    /// 后台单飞刷新: 同一 host 同时只允许一个刷新任务, 避免线程堆积
+    fn spawn_refresh(self: &Arc<Self>, host: &str) {
+        let cache = Arc::clone(self);
+        let host = host.to_string();
+
+        {
+            let mut refreshing = cache.refreshing.lock();
+            if !refreshing.insert(host.clone()) {
+                return;
+            }
+        }
+
+        // 守卫先建好再起线程: 正常结束或 panic 展开都会把 host 移出 refreshing
+        let guard = RefreshingGuard {
+            cache: Arc::clone(&cache),
+            host: host.clone(),
+        };
+        thread::spawn(move || {
+            let _guard = guard;
+            match cache.refresh_target_ips(&host) {
+                Ok(_) => {
+                    log_d!("async refresh {} ok", host);
+                }
+                Err(e) => {
+                    log_e!("async refresh {} failed: {}", host, e);
+                }
+            }
+        });
     }
 
     /// Bootstrap CF DoH IPs (resolve via configured DNS, filter to CF range)
@@ -636,16 +733,46 @@ fn grease_ech(_ip: std::net::Ipv4Addr) -> io::Result<Vec<u8>> {
 
 static INIT: std::sync::Once = std::sync::Once::new();
 
+/// 共享的 ECH 客户端上下文 (TLS1.3 + 跳过校验), 避免每条连接都新建 SSL_CTX
 #[cfg(has_ech)]
-fn connect_ech(host: &str, ip: Ipv4Addr, ecl: &[u8]) -> io::Result<openssl::ssl::SslStream<TcpStream>> {
+static ECH_SSL_CTX: std::sync::OnceLock<openssl::ssl::SslContext> = std::sync::OnceLock::new();
+
+/// 共享的直连客户端上下文
+static DIRECT_SSL_CTX: std::sync::OnceLock<openssl::ssl::SslContext> = std::sync::OnceLock::new();
+
+/// 构建客户端 SSL_CTX (ECH 需要 TLS1.3; 均跳过校验, 证书校验由 MITM 自签 CA 链路承担)
+fn build_client_ctx(min_tls13: bool) -> io::Result<openssl::ssl::SslContext> {
     INIT.call_once(|| openssl::init());
     let mut ctx = openssl::ssl::SslContext::builder(openssl::ssl::SslMethod::tls_client())
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    ctx.set_min_proto_version(Some(openssl::ssl::SslVersion::TLS1_3))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    if min_tls13 {
+        ctx.set_min_proto_version(Some(openssl::ssl::SslVersion::TLS1_3))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    }
     ctx.set_verify(openssl::ssl::SslVerifyMode::NONE);
-    let ctx = ctx.build();
-    let ssl = openssl::ssl::Ssl::new(&ctx).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    Ok(ctx.build())
+}
+
+/// 取共享 SSL_CTX: 首次构建后全程复用, 省掉每条连接重建 SSL_CTX 的开销
+/// 注意: 未开启客户端会话缓存 (SSL_SESS_CACHE_CLIENT), 所以不会带来 TLS1.3 会话复用
+fn shared_client_ctx(
+    cell: &'static std::sync::OnceLock<openssl::ssl::SslContext>,
+    min_tls13: bool,
+) -> io::Result<&'static openssl::ssl::SslContext> {
+    if let Some(ctx) = cell.get() {
+        return Ok(ctx);
+    }
+
+    let _ = cell.set(build_client_ctx(min_tls13)?);
+    cell.get()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ssl ctx init failed"))
+}
+
+#[cfg(has_ech)]
+fn connect_ech(host: &str, ip: Ipv4Addr, ecl: &[u8]) -> io::Result<openssl::ssl::SslStream<TcpStream>> {
+    // ECH config 与 server names 仍按连接 (SSL 对象) 设置, 只有 SSL_CTX 复用
+    let ssl = openssl::ssl::Ssl::new(shared_client_ctx(&ECH_SSL_CTX, true)?)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     if unsafe { ffi::SSL_set1_ech_config_list(ssl.as_ptr(), ecl.as_ptr(), ecl.len()) } != 1 {
         return Err(io::Error::new(io::ErrorKind::Other, "ech_config"));
     }
@@ -656,6 +783,7 @@ fn connect_ech(host: &str, ip: Ipv4Addr, ecl: &[u8]) -> io::Result<openssl::ssl:
         &SocketAddrV4::new(ip, 443).into(),
         std::time::Duration::from_secs(10),
     )?;
+    tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
     tcp.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
     let st = ssl.connect(tcp).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -669,12 +797,8 @@ fn connect_ech(_host: &str, _ip: Ipv4Addr, _ecl: &[u8]) -> io::Result<openssl::s
 }
 
 fn connect_direct(host: &str, connect_ip: Option<Ipv4Addr>) -> io::Result<openssl::ssl::SslStream<TcpStream>> {
-    INIT.call_once(|| openssl::init());
-    let mut ctx = openssl::ssl::SslContext::builder(openssl::ssl::SslMethod::tls_client())
+    let ssl = openssl::ssl::Ssl::new(shared_client_ctx(&DIRECT_SSL_CTX, false)?)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    ctx.set_verify(openssl::ssl::SslVerifyMode::NONE);
-    let ctx = ctx.build();
-    let ssl = openssl::ssl::Ssl::new(&ctx).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     let host_c = std::ffi::CString::new(host).unwrap();
     unsafe { openssl_sys::SSL_set_tlsext_host_name(ssl.as_ptr(), host_c.as_ptr() as *mut _) };
     let tcp = match connect_ip {
@@ -684,6 +808,7 @@ fn connect_direct(host: &str, connect_ip: Option<Ipv4Addr>) -> io::Result<openss
         )?,
         None => TcpStream::connect(format!("{host}:443"))?,
     };
+    tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(15)))?;
     tcp.set_write_timeout(Some(std::time::Duration::from_secs(15)))?;
     let st = ssl.connect(tcp).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -692,7 +817,7 @@ fn connect_direct(host: &str, connect_ip: Option<Ipv4Addr>) -> io::Result<openss
 
 /// Open backend connection. For target hosts: ECH only, multi-IP retry.
 /// For non-target hosts: direct TLS.
-fn open_backend(host: &str, cache: &EchCache) -> io::Result<openssl::ssl::SslStream<TcpStream>> {
+fn open_backend(host: &str, cache: &Arc<EchCache>) -> io::Result<openssl::ssl::SslStream<TcpStream>> {
     if !is_target(host) {
         return connect_direct(host, None);
     }
@@ -737,9 +862,10 @@ fn is_timeout(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::TimedOut
 }
 
+/// POLLIN/POLLHUP/POLLERR 任一事件都视为「该 fd 需处理」
 // ============================= Proxy Handler ================================
 
-fn handle_connect(client: &mut TcpStream, host: &str, cache: &EchCache, ca: &MitmCa) {
+fn handle_connect(client: &mut TcpStream, host: &str, cache: &Arc<EchCache>, ca: &MitmCa) {
     if !is_target(host) {
         // Non-target domains should never reach here if proxySelector is correct
         // But as safety measure, just close connection silently
@@ -756,6 +882,7 @@ fn handle_tunnel(client: &mut TcpStream, host: &str, _cache: &EchCache) {
         Ok(s) => s,
         Err(_) => return,
     };
+    remote.set_nodelay(true).ok();
     remote.set_read_timeout(Some(std::time::Duration::from_secs(60))).ok();
     remote.set_write_timeout(Some(std::time::Duration::from_secs(60))).ok();
     let _ = client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -809,15 +936,15 @@ fn handle_tunnel(client: &mut TcpStream, host: &str, _cache: &EchCache) {
     client.set_nonblocking(false).ok();
 }
 
-fn handle_mitm(client: &mut TcpStream, host: &str, cache: &EchCache, ca: &MitmCa) {
+fn handle_mitm(client: &mut TcpStream, host: &str, cache: &Arc<EchCache>, ca: &MitmCa) {
     log_d!("handle_mitm: {}", host);
 
-    // Per-host 互斥: 串行化 open_backend + TLS 握手, relay 阶段不持锁
+    // Per-host 有界并发: 限制同时进行的 open_backend + TLS 握手数量, relay 阶段不持名额
     let mut browser_tls;
     let mut backend;
     {
-        let host_lock = get_host_lock(host);
-        let _host_guard = host_lock.lock();
+        let host_gate = get_host_gate(host);
+        let _host_permit = host_gate.acquire();
 
         backend = match open_backend(host, cache) {
             Ok(s) => s,
@@ -888,7 +1015,7 @@ fn handle_mitm(client: &mut TcpStream, host: &str, cache: &EchCache, ca: &MitmCa
             Err((_, e)) => { log_e!("handle_mitm: into_connection failed: {:?}", e); return; },
         };
     }
-    // _host_guard 已释放, 不同连接可以并行 relay
+    // _host_permit 已释放, 不同连接可以并行 relay
     // 使用 ManuallyDrop 包装 backend: 当连接异常断开时 (如 App 挂后台后 OS 杀掉 TCP),
     // 直接跳过 OpenSSL 的 drop (SSL_free), 避免在已损坏的内部状态上触发 SIGSEGV。
     // 改为手动关闭底层 TCP socket 来释放资源。
@@ -976,13 +1103,18 @@ fn handle_mitm(client: &mut TcpStream, host: &str, cache: &EchCache, ca: &MitmCa
     if backend_error {
         unsafe { libc::close(tcp_fd); }
         // ManuallyDrop 不会调用 SSL_free, 避免 crash
+    } else {
+        // 正常结束: 必须真正释放 backend (SSL_free + 关闭 fd)
+        // 否则每次成功请求都会泄漏一个 fd 和 SSL 缓冲 (ManuallyDrop 不会自动 drop)
+        unsafe { std::mem::ManuallyDrop::drop(&mut backend); }
     }
-    // backend 正常退出时不 forget, 让 OpenSSL 正常 drop
     log_d!("handle_mitm: relay done for {}", host);
     client.set_nonblocking(false).ok();
 }
 
 fn handle_client(mut client: TcpStream, cache: Arc<EchCache>, ca: Arc<MitmCa>) {
+    // 转发以请求头/小包为主, 关闭 Nagle 避免额外延迟
+    client.set_nodelay(true).ok();
     let peer = client.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let client_clone = match client.try_clone() {
         Ok(c) => c,
@@ -1104,7 +1236,11 @@ fn handle_client(mut client: TcpStream, cache: Arc<EchCache>, ca: Arc<MitmCa>) {
             thread::sleep(std::time::Duration::from_millis(1));
         }
         if backend_error {
+            // 异常路径: 跳过 SSL_free, 仅关闭底层 fd
             unsafe { libc::close(tcp_fd); }
+        } else {
+            // 正常路径: 真正释放, 避免 fd 与 SSL 缓冲泄漏
+            unsafe { std::mem::ManuallyDrop::drop(&mut backend); }
         }
         client.set_nonblocking(false).ok();
     }
@@ -1121,17 +1257,61 @@ struct ProxyServer {
 /// 最大并发连接数, 防止图片瀑布流打爆低端机
 const MAX_CONCURRENT: u32 = 32;
 
+/// 并发贴顶告警上次输出时间 (按 60s 节流)
+static LAST_LIMIT_WARN: Mutex<Option<Instant>> = Mutex::new(None);
+
 static SERVER: Mutex<Option<ProxyServer>> = Mutex::new(None);
 static CA_PEM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-/// Per-host mutex: 串行化同一 host 的 MITM 操作, 防止 OpenSSL FFI 并发崩溃
-static HOST_LOCKS: Mutex<Option<std::collections::HashMap<String, Arc<Mutex<()>>>>> = Mutex::new(None);
+/// 同一 host 允许同时进行「建连 + 握手」的最大连接数
+///
+/// 同一 host 的新连接被完全串行握手时, 一屏同域图片的队尾请求很容易超过客户端读超时;
+/// 这里改为有界并发: 保留「避免集中握手风暴」的保护, 同时把排队时长收敛在上限内。
+const HOST_HANDSHAKE_CONCURRENCY: usize = 3;
 
-fn get_host_lock(host: &str) -> Arc<Mutex<()>> {
-    let mut map = HOST_LOCKS.lock();
+/// 每 host 建连闸门 (parking_lot 0.12 无 Semaphore, 用 Mutex + Condvar 自建)
+struct HostGate {
+    in_flight: Mutex<usize>,
+    cond: Condvar,
+}
+
+impl HostGate {
+    fn new() -> Self {
+        Self {
+            in_flight: Mutex::new(0),
+            cond: Condvar::new(),
+        }
+    }
+
+    /// 申请一个建连名额, 满则等待
+    fn acquire(&self) -> HostPermit<'_> {
+        let mut in_flight = self.in_flight.lock();
+        while *in_flight >= HOST_HANDSHAKE_CONCURRENCY {
+            self.cond.wait(&mut in_flight);
+        }
+        *in_flight += 1;
+        HostPermit(self)
+    }
+}
+
+/// 建连名额 RAII: 释放时归还名额并唤醒等待者 (保证提前 return 也会释放)
+struct HostPermit<'a>(&'a HostGate);
+
+impl Drop for HostPermit<'_> {
+    fn drop(&mut self) {
+        let mut in_flight = self.0.in_flight.lock();
+        *in_flight = in_flight.saturating_sub(1);
+        self.0.cond.notify_one();
+    }
+}
+
+static HOST_GATES: Mutex<Option<std::collections::HashMap<String, Arc<HostGate>>>> = Mutex::new(None);
+
+fn get_host_gate(host: &str) -> Arc<HostGate> {
+    let mut map = HOST_GATES.lock();
     let map = map.get_or_insert_with(std::collections::HashMap::new);
     map.entry(host.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .or_insert_with(|| Arc::new(HostGate::new()))
         .clone()
 }
 
@@ -1175,6 +1355,15 @@ fn start_server(port: u16, dns: &str, ca_dir: &str, cache_dir: &str) -> u16 {
             // 检查并发数
             let current = *active_count.lock();
             if current >= MAX_CONCURRENT {
+                // 贴顶日志按 60s 节流, 便于真机观测是否长期占满
+                {
+                    let mut last = LAST_LIMIT_WARN.lock();
+                    let should_log = last.map(|t| t.elapsed().as_secs() >= 60).unwrap_or(true);
+                    if should_log {
+                        *last = Some(Instant::now());
+                        log_e!("connection limit reached ({}), delaying accept", MAX_CONCURRENT);
+                    }
+                }
                 thread::sleep(std::time::Duration::from_millis(20));
                 continue;
             }
