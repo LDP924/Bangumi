@@ -1,0 +1,299 @@
+name: Build upstream signed APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-upstream-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'latest'
+          check-latest: true
+
+      - name: Resolve build version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(node -pe "require('./app.json').expo.version")
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          BUILD_TAG="apk-v${VERSION}-${SHORT_SHA}"
+          ASSET_NAME="bangumi_v${VERSION}_${SHORT_SHA}_arm64-v8a.apk"
+          CLONE_ASSET_NAME="bangumi_clone_v${VERSION}_${SHORT_SHA}_arm64-v8a.apk"
+          echo "build_tag=$BUILD_TAG" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+          echo "clone_asset_name=$CLONE_ASSET_NAME" >> "$GITHUB_OUTPUT"
+          echo "Building $BUILD_TAG (source: $GITHUB_SHA)"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          check-latest: true
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install NDK versions
+        run: |
+          yes | sdkmanager "ndk;23.1.7779620" > /dev/null 2>&1 || true
+          yes | sdkmanager "ndk;27.1.12297006" > /dev/null 2>&1 || true
+
+      - name: Cache Yarn global cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/yarn
+            ~/.cache/node
+          key: yarn-global-${{ runner.os }}
+          restore-keys: |
+            yarn-global-${{ runner.os }}
+
+      - name: Decode Android keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/Bangumi.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "::error::Keystore file is empty (0 bytes) at $KEYSTORE_PATH"
+            echo "::error::Verify ANDROID_KEYSTORE_BASE64 secret exists in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          echo "Keystore size: $(stat -c%s "$KEYSTORE_PATH") bytes"
+
+      - name: Prepare APK source
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          node packages/env.js android
+
+          if [ -f android/rust/build-android.sh ]; then
+            sed 's/darwin-x86_64/linux-x86_64/g' android/rust/build-android.sh > android/rust/build-android-linux.sh
+            chmod +x android/rust/build-android-linux.sh
+          fi
+
+          sed -i 's|https\\://mirrors.cloud.tencent.com/gradle/|https\\://services.gradle.org/distributions/|g' android/gradle/wrapper/gradle-wrapper.properties || true
+
+          cp android/gradle_yours.properties android/gradle.properties
+
+          sed -i '/^org\.gradle\.configureondemand=/d' android/gradle.properties
+          sed -i '/^org\.gradle\.configuration-cache=/d' android/gradle.properties
+          sed -i '/^org\.gradle\.daemon=/d' android/gradle.properties
+          echo 'org.gradle.configureondemand=false' >> android/gradle.properties
+
+          sed -i '/^MYAPP_RELEASE_STORE_FILE=/d' android/gradle.properties
+          sed -i '/^MYAPP_RELEASE_KEY_ALIAS=/d' android/gradle.properties
+          sed -i '/^MYAPP_RELEASE_STORE_PASSWORD=/d' android/gradle.properties
+          sed -i '/^MYAPP_RELEASE_KEY_PASSWORD=/d' android/gradle.properties
+
+          node <<'NODE'
+          const fs = require('fs')
+
+          function readJson(p) { return JSON.parse(fs.readFileSync(p, 'utf8')) }
+          function writeJson(p, v) { fs.writeFileSync(p, `${JSON.stringify(v, null, 2)}\n`) }
+
+          const appJson = readJson('app.json')
+          const plugins = appJson.expo?.plugins
+          if (Array.isArray(plugins)) {
+            const filtered = plugins.filter(p => p !== 'expo-web-browser' && !(Array.isArray(p) && p[0] === 'expo-web-browser'))
+            if (filtered.length !== plugins.length) {
+              appJson.expo.plugins = filtered
+              writeJson('app.json', appJson)
+            }
+          }
+
+          if (!appJson.expo?.version) throw new Error('app.json is missing expo.version')
+          NODE
+
+      - name: Install JavaScript dependencies
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+          yarn --version
+
+          yarn install --ignore-engines --ignore-scripts --network-timeout 600000
+
+          ./node_modules/.bin/patch-package --patch-dir packages/android/patches || echo "::warning::Some Android patch-package patches did not apply; continuing."
+
+      - name: Build Rust native library
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/android/rust"
+
+          if [ ! -f build-android-linux.sh ]; then
+            echo "No Rust build script found, skipping."
+            exit 0
+          fi
+
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+
+          echo "y" | bash build-android-linux.sh
+
+      - name: Clear Metro cache
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          rm -rf /tmp/metro-* /tmp/haste-map-* node_modules/.cache 2>/dev/null || true
+          echo "Metro/Haste cache cleared before bundling"
+
+      - name: Build Release APK
+        env:
+          NODE_ENV: production
+          MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
+          MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/android"
+
+          chmod +x ./gradlew
+
+          if [ ! -f "$MYAPP_RELEASE_STORE_FILE" ]; then
+            echo "::error::Keystore not found: $MYAPP_RELEASE_STORE_FILE"
+            exit 1
+          fi
+
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            -PMYAPP_RELEASE_STORE_FILE="$MYAPP_RELEASE_STORE_FILE" \
+            -PMYAPP_RELEASE_STORE_PASSWORD="$MYAPP_RELEASE_STORE_PASSWORD" \
+            -PMYAPP_RELEASE_KEY_ALIAS="$MYAPP_RELEASE_KEY_ALIAS" \
+            -PMYAPP_RELEASE_KEY_PASSWORD="$MYAPP_RELEASE_KEY_PASSWORD" \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
+            -Dorg.gradle.parallel=true
+
+      - name: Package APK
+        env:
+          ASSET_NAME: ${{ steps.version.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          apk_dir="android/app/build/outputs/apk/release"
+          apk_path="$(ls "$apk_dir"/app-*-release.apk 2>/dev/null | head -1 || ls "$apk_dir"/app-release.apk 2>/dev/null | head -1)"
+
+          if [ -z "$apk_path" ] || [ ! -f "$apk_path" ]; then
+            echo "::error::No release APK found in $apk_dir/"
+            ls -la "$apk_dir/" 2>/dev/null || true
+            exit 1
+          fi
+
+          target_apk="$GITHUB_WORKSPACE/$ASSET_NAME"
+          cp "$apk_path" "$target_apk"
+          echo "APK_PATH=$target_apk" >> "$GITHUB_ENV"
+
+      - name: Build and package clone APK
+        env:
+          NODE_ENV: production
+          MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
+          MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          CLONE_ASSET_NAME: ${{ steps.version.outputs.clone_asset_name }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/android"
+
+          sed -i -E 's/applicationId "[^"]*"/applicationId "com.ldp924.bangumi"/' app/build.gradle
+
+          rm -rf app/build/outputs/apk/release/
+
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            -PMYAPP_RELEASE_STORE_FILE="$MYAPP_RELEASE_STORE_FILE" \
+            -PMYAPP_RELEASE_STORE_PASSWORD="$MYAPP_RELEASE_STORE_PASSWORD" \
+            -PMYAPP_RELEASE_KEY_ALIAS="$MYAPP_RELEASE_KEY_ALIAS" \
+            -PMYAPP_RELEASE_KEY_PASSWORD="$MYAPP_RELEASE_KEY_PASSWORD" \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError" \
+            -Dorg.gradle.parallel=true
+
+          cd "$GITHUB_WORKSPACE"
+          apk_dir="android/app/build/outputs/apk/release"
+          apk_path="$(ls "$apk_dir"/app-*-release.apk 2>/dev/null | head -1 || ls "$apk_dir"/app-release.apk 2>/dev/null | head -1)"
+
+          if [ -z "$apk_path" ] || [ ! -f "$apk_path" ]; then
+            echo "::error::No clone APK found"
+            exit 1
+          fi
+
+          target_apk="$GITHUB_WORKSPACE/$CLONE_ASSET_NAME"
+          cp "$apk_path" "$target_apk"
+          echo "CLONE_APK_PATH=$target_apk" >> "$GITHUB_ENV"
+
+      - name: Validate APK
+        run: |
+          set -euo pipefail
+
+          for apk in "$APK_PATH" "$CLONE_APK_PATH"; do
+            if [ ! -f "$apk" ]; then
+              echo "::error::APK not found: $apk"
+              exit 1
+            fi
+
+            apk_size="$(stat -c%s "$apk")"
+            echo "$(basename "$apk") size: $apk_size bytes"
+
+            if [ "$apk_size" -lt 10485760 ]; then
+              echo "::warning::APK size is less than 10MB: $apk_size bytes ($apk)"
+            fi
+          done
+
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}" -name apksigner 2>/dev/null | head -1)"
+          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --verbose "$APK_PATH"
+            "$APKSIGNER" verify --verbose "$CLONE_APK_PATH"
+            echo "APK signatures verified"
+          else
+            echo "::warning::apksigner not found, skipping verification"
+          fi
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_TAG: ${{ steps.version.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+
+          NOTES="Built from ${GITHUB_SHA:0:7}: $(git log -1 --pretty=%s)"
+
+          if gh release view "$BUILD_TAG" >/dev/null 2>&1; then
+            gh release upload "$BUILD_TAG" "$APK_PATH" "$CLONE_APK_PATH" --clobber
+          else
+            gh release create "$BUILD_TAG" "$APK_PATH" "$CLONE_APK_PATH" \
+              --title "Bangumi $BUILD_TAG" \
+              --notes "$NOTES"
+          fi
+
+          echo "Release: https://github.com/${{ github.repository }}/releases/tag/$BUILD_TAG"

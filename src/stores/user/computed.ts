@@ -215,9 +215,9 @@ export default class Computed extends State implements StoreConstructor<typeof S
     return this.pmIn.list.findIndex(item => item.new) !== -1
   }
 
-  /** 是否开发者 */
+/** 是否开发者 */
   @computed get isDeveloper() {
-    return this.myUserId == 456208
+    return [456208,671062].includes(Number(this.myUserId))
   }
 
   /** 是否登录 (客户端内是否获得了 api 鉴权) */
