@@ -8,9 +8,11 @@ import React from 'react'
 import { observer } from 'mobx-react'
 import { ActionSheet, Heatmap, Text } from '@components'
 import { ItemSetting } from '@_'
+import { _ } from '@stores'
 import { r } from '@utils/dev'
 import { useBoolean } from '@utils/hooks'
 import { WEB } from '@constants'
+import { IconShield } from '../icons'
 import { getShows } from '../../utils'
 import Email from './email'
 import Logout from './logout'
@@ -35,6 +37,7 @@ function DangerZone({ filter }: WithFilterProps) {
   return (
     <>
       <ItemSetting
+        icon={<IconShield color={_.colorDanger} />}
         arrow
         highlight
         filter={filter}
@@ -54,13 +57,15 @@ function DangerZone({ filter }: WithFilterProps) {
         height={filter ? 480 : 720}
         onClose={setFalse}
       >
-        {shows.logout && <Logout filter={filter} setFalse={setFalse} />}
         {shows.settings && <Settings filter={filter} />}
         {shows.networdServices && <NetworkServices filter={filter} />}
         {shows.showNSFWSubject && <ShowNSFWSubject filter={filter} />}
         {shows.privacy && <Privacy filter={filter} />}
         {shows.password && <Password filter={filter} />}
         {shows.email && <Email filter={filter} />}
+
+        {/* 危险操作固定放最下方 */}
+        {shows.logout && <Logout filter={filter} setFalse={setFalse} />}
       </ActionSheet>
     </>
   )

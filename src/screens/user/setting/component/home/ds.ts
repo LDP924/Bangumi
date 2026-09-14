@@ -90,7 +90,8 @@ export const TEXTS = {
   },
   homeSortSink: {
     hd: '条目自动下沉',
-    information: '当条目没有未观看的已放送章节时，自动下沉到分组底部'
+    information:
+      '当条目没有未观看的已放送章节时，自动下沉到分组底部\n完全未播放（一集都没有已放送章节）的条目会沉到所属年份分组最下方'
   },
   showGame: {
     hd: '游戏标签页',
@@ -102,5 +103,9 @@ export const TEXTS = {
   homeAnimeInfoInline: {
     hd: '放送及额外信息',
     information: '显示播送进度、下一集时间、季度颜色徽章'
+  },
+  homeHeatMap: {
+    title: '章节讨论热力图',
+    information: '按钮下方不同透明度橙色条块，可快速了解讨论的激烈程度'
   }
 } as const
