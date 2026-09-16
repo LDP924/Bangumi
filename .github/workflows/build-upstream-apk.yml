@@ -2,6 +2,11 @@ name: Build upstream signed APK
 
 on:
   workflow_dispatch:
+    inputs:
+      release_notes:
+        description: '发行版更新日志 (上游提交记录, sync 工作流自动传入; 留空则自动从 git log 生成)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -19,11 +24,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # 拉全量历史, 用于自动生成发行版日志 (git log 上游提交)
+          fetch-depth: 0
 
-      - name: Set up Node
+      - name: Set up Node (LTS 固定, 拒绝漂移)
         uses: actions/setup-node@v6
         with:
-          node-version: 'latest'
+          # RN 0.86 / Expo 57 要求 node >= 20; 固定 22 LTS
+          # (不用 latest: 每逢偶数版大版本发布构建链就随机炸)
+          node-version: '22'
           check-latest: true
 
       - name: Resolve build version
@@ -48,13 +58,33 @@ jobs:
           check-latest: true
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Install NDK versions
+      - name: Accept SDK licenses (写文件绕交互, 见 run 130/131 教训)
         run: |
-          yes | sdkmanager "ndk;23.1.7779620" > /dev/null 2>&1 || true
-          yes | sdkmanager "ndk;27.1.12297006" > /dev/null 2>&1 || true
+          # runner 升级 cmdline-tools 20.0 后: setup-android 的 --licenses 交互挂死,
+          # yes|sdkmanager 也 Broken pipe 静默拒装 NDK —— 直接写 license hash 文件
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '\n8933bad161af4178b1185d48a372f1c35230d97b\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n' \
+            > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf '\nd975f751698a77b662f1254ddbeed3901e976f5a\n' \
+            > "$ANDROID_HOME/licenses/android-sdk-preview-license" || true
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          sdkmanager --version
+
+      - name: Install NDK versions (装完必验证, 静默失败直接炸)
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          # 23.1: android/build.gradle ndkVersion (RN 层)
+          # 27.1: android/rust 原生库构建
+          sdkmanager "ndk;23.1.7779620" "ndk;27.1.12297006" > /dev/null
+          for v in 23.1.7779620 27.1.12297006; do
+            if [ ! -d "$ANDROID_HOME/ndk/$v" ]; then
+              echo "::error::NDK $v 未装上 (sdkmanager 静默失败)"
+              exit 1
+            fi
+          done
+          echo "NDK 23.1 + 27.1 就绪"
 
       - name: Cache Yarn global cache
         uses: actions/cache@v6
@@ -96,6 +126,7 @@ jobs:
             chmod +x android/rust/build-android-linux.sh
           fi
 
+          # 上游用腾讯镜像的 gradle 分发包, CI 上换回官方源 (国内镜像海外 runner 反而慢/不稳)
           sed -i 's|https\\://mirrors.cloud.tencent.com/gradle/|https\\://services.gradle.org/distributions/|g' android/gradle/wrapper/gradle-wrapper.properties || true
 
           cp android/gradle_yours.properties android/gradle.properties
@@ -171,7 +202,7 @@ jobs:
           MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
           MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/android"
@@ -219,7 +250,7 @@ jobs:
           MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
           MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           CLONE_ASSET_NAME: ${{ steps.version.outputs.clone_asset_name }}
         run: |
           set -euo pipefail
@@ -279,6 +310,28 @@ jobs:
             echo "::warning::apksigner not found, skipping verification"
           fi
 
+      - name: Compose release notes (上游提交日志)
+        id: notes
+        env:
+          INPUT_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$INPUT_NOTES" ]; then
+            # sync 工作流传入: 上游最新一次 push 会话的提交 (首选)
+            printf '%s\n' "$INPUT_NOTES" > /tmp/release_notes.md
+            echo "notes_source=sync-dispatch" >> "$GITHUB_OUTPUT"
+          else
+            # 手动触发: 上游作者(czy0729)最新提交 1h 聚簇取最新推送会话
+            # (fork 同步历史结构不稳定, 按作者过滤天然排除 fork 自有 commit)
+            git log --author='czy0729' -n 60 --no-merges \
+              --pretty=format:'%ci|%H|%s' | python3 .github/scripts/cluster-notes.py \
+              > /tmp/release_notes.md
+          fi
+
+          echo "=== 发行版日志 ==="
+          cat /tmp/release_notes.md
+
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -286,14 +339,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          NOTES="Built from ${GITHUB_SHA:0:7}: $(git log -1 --pretty=%s)"
-
           if gh release view "$BUILD_TAG" >/dev/null 2>&1; then
             gh release upload "$BUILD_TAG" "$APK_PATH" "$CLONE_APK_PATH" --clobber
           else
             gh release create "$BUILD_TAG" "$APK_PATH" "$CLONE_APK_PATH" \
               --title "Bangumi $BUILD_TAG" \
-              --notes "$NOTES"
+              --notes-file /tmp/release_notes.md
           fi
 
           echo "Release: https://github.com/${{ github.repository }}/releases/tag/$BUILD_TAG"
