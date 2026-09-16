@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2020-09-03 10:47:08
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-12 03:22:41
+ * @Last Modified time: 2026-09-16 04:02:42
  */
 import { useCallback, useMemo } from 'react'
 import { View } from 'react-native'
@@ -14,6 +14,7 @@ import {
   HorizontalList,
   Image,
   Loading,
+  Squircle,
   Text,
   Touchable
 } from '@components'
@@ -44,7 +45,7 @@ function Item({ index, pickIndex }: Props) {
 
   const subjectId = otaStore.advSubjectId(pickIndex)
   const adv = otaStore.adv(subjectId)
-  const { id } = adv
+  const { id, title, cover, date, score, rank, total, length, dev, time, cn } = adv
 
   const handlePress = useCallback(() => {
     const { title, cover } = adv
@@ -75,6 +76,21 @@ function Item({ index, pickIndex }: Props) {
     )
   }, [adv, id])
 
+  /**
+   * 下面两个 useMemo 必须在 `if (!id)` 之前
+   *  - 数据未就绪时 otaStore.adv() 返回的是 {}, id 为 undefined, 会走 loading 分支
+   *  - 若把它们写在提前 return 之后, 首次渲染会少调用这两个 hook,
+   *    数据回来后再渲染就会报 Rendered more hooks than during the previous render
+   * */
+  const thumbs = useMemo(() => (id ? getThumbs(id, length) : []), [id, length])
+  const thumbsData = useMemo(() => thumbs.slice(0, 3).map((image, id) => ({ id, image })), [thumbs])
+
+  /** 稳定 style 引用, 避免每次渲染生成新数组击穿子组件 memo */
+  const itemStyle = useMemo(
+    () => stl(flexStyle({ align: 'start' }), styles.container, styles.wrap),
+    [styles]
+  )
+
   if (!id) {
     return (
       <Flex style={styles.loading} justify='center'>
@@ -83,19 +99,10 @@ function Item({ index, pickIndex }: Props) {
     )
   }
 
-  const { title, cover, date, score, rank, total, length, dev, time, cn } = adv
   const titleText = HTMLDecode(title)
   const size = titleText.length >= 20 ? 13 : titleText.length >= 14 ? 14 : 15
   const image = cover ? `${HOST_BGM_STATIC}/pic/cover/m/${cover}.jpg` : IMG_DEFAULT
-  const thumbs = getThumbs(id, length)
   const thumbs2 = getThumbs(id, length, false)
-
-  /** 稳定 style 引用, 避免每次渲染生成新数组击穿子组件 memo */
-  const itemStyle = useMemo(
-    () => stl(flexStyle({ align: 'start' }), styles.container, styles.wrap),
-    [styles]
-  )
-  const thumbsData = useMemo(() => thumbs.slice(0, 3).map((image, id) => ({ id, image })), [thumbs])
 
   const tipStr = [date, dev, formatPlaytime(time), cn ? '汉化' : '']
     .filter(item => !!item)
@@ -105,10 +112,7 @@ function Item({ index, pickIndex }: Props) {
   const y = InView.y(index, IMG_HEIGHT_LG, _.window.height * 0.4)
 
   return (
-    <Touchable
-      style={itemStyle}
-      onPress={handlePress}
-    >
+    <Touchable style={itemStyle} onPress={handlePress}>
       <InView style={styles.inView} y={y}>
         <Cover
           src={image}
@@ -153,21 +157,27 @@ function Item({ index, pickIndex }: Props) {
             <HorizontalList
               data={thumbsData}
               renderItem={(item, idx) => (
-                <Image
+                <Squircle
                   key={item.id}
                   style={stl(!!idx && _.ml.sm, idx === thumbsData.length - 1 && _.mr.md)}
-                  src={item.image}
-                  size={THUMB_WIDTH}
+                  width={THUMB_WIDTH}
                   height={THUMB_HEIGHT}
                   radius={_.radiusSm}
-                  errorToHide
-                  onPress={() => {
-                    showImageViewer(
-                      thumbs2.map(t => ({ url: t })),
-                      idx
-                    )
-                  }}
-                />
+                >
+                  <Image
+                    src={item.image}
+                    size={THUMB_WIDTH}
+                    height={THUMB_HEIGHT}
+                    radius={0}
+                    errorToHide
+                    onPress={() => {
+                      showImageViewer(
+                        thumbs2.map(t => ({ url: t })),
+                        idx
+                      )
+                    }}
+                  />
+                </Squircle>
               )}
               renderNums={
                 thumbs2.length > 3 &&

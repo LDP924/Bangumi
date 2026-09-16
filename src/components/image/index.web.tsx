@@ -11,12 +11,11 @@
  * iOS 入口 (index.ios.tsx) 已迁移 expo-image, 与本文件互不影响
  */
 import { useMemo } from 'react'
-import { Image as RNImage } from 'react-native'
 import { observer } from 'mobx-react'
 import { _, systemStore } from '@stores'
 import { omit } from '@utils'
 import { r } from '@utils/dev'
-import { applyLainProxy } from '@utils/proxy'
+import { resolveImageUri } from '@utils/image'
 import { EVENT } from '@constants'
 import { TEXT_ONLY } from '@src/config'
 import { devLog } from '../dev'
@@ -30,9 +29,6 @@ import ImageTouchable from './touchable'
 import { computeImageStyles, imageViewerCallback, withDefaults } from './utils'
 import { COMPONENT, OMIT_KEYS } from './ds'
 import { memoStyles } from './styles'
-
-// 项目中若需要使用原本的 RN Image Component, 也需在这里引入以便统一管理
-export { RNImage }
 
 import type { Props as ImageProps, State } from './types'
 export type { ImageProps }
@@ -166,7 +162,7 @@ export const Image = observer(function Image(baseProps: ImageProps) {
       if (typeof uri === 'string') {
         // Web 端 autoSize 宽高未获取完前不阻塞渲染 (与旧实现的 !(IOS || WEB) 判定一致)
 
-        const finalUri = applyLainProxy(uri)
+        const finalUri = resolveImageUri(uri)
         return (
           <Remote
             {...passProps}
