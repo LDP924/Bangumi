@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2026-08-25 00:00:00
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-08-25 00:00:00
+ * @Last Modified time: 2026-09-19 08:20:39
  */
 
 /** 缩小上限常量以便在单测中触发数量超限淘汰 */
@@ -15,24 +15,22 @@ jest.mock('../ds', () => ({
   TMP_TTL: 24 * 60 * 60 * 1000
 }))
 
-jest.mock('../../file-system', () => ({
-  FileSystem: {
-    documentDirectory: '/cache/',
-    makeDirectoryAsync: jest.fn(),
-    readDirectoryAsync: jest.fn(),
-    downloadAsync: jest.fn(),
-    moveAsync: jest.fn(),
-    getInfoAsync: jest.fn(),
-    deleteAsync: jest.fn()
-  }
+jest.mock('expo-file-system/legacy', () => ({
+  documentDirectory: '/cache/',
+  makeDirectoryAsync: jest.fn(),
+  readDirectoryAsync: jest.fn(),
+  downloadAsync: jest.fn(),
+  moveAsync: jest.fn(),
+  getInfoAsync: jest.fn(),
+  deleteAsync: jest.fn()
 }))
 
 // jest/setup.js 全局 mock 了 crypto (只提供 get / set), 这里需要真实 SHA1
 jest.unmock('@utils/thirdParty/crypto')
 
-import { SHA1 } from '../../crypto'
+import * as FileSystem from 'expo-file-system/legacy'
 import { logger } from '@utils/dev'
-import { FileSystem } from '../../file-system'
+import { SHA1 } from '../../crypto'
 import {
   classifyEntries,
   cleanupCache,
@@ -265,11 +263,11 @@ describe('cleanupCache', () => {
 
     expect(fs.getInfoAsync).not.toHaveBeenCalled()
     expect(fs.deleteAsync).not.toHaveBeenCalled()
-    expect(logger.warn).toHaveBeenCalledWith(
-      'ImageCache',
-      expect.stringContaining('hits='),
-      'cleanup none'
-    )
+    expect(logger.warn).toHaveBeenCalledWith('@utils/image-cache', 'counters', {
+      hits: 0,
+      writes: 0,
+      failures: 0
+    })
   })
 
   it('回收超过 TTL 的 tmp 残留', async () => {

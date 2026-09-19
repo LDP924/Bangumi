@@ -2,19 +2,18 @@
  * @Author: czy0729
  * @Date: 2026-08-24 00:00:00
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-16 23:31:29
+ * @Last Modified time: 2026-09-19 09:06:06
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Image as RNImage } from 'react-native'
 import { getTimestamp } from '@utils'
 import { logger } from '@utils/dev'
 import { fixImageProtocol, resolveImageUri } from '@utils/image'
-import { invalidate } from '@utils/thirdParty/image-cache-manager'
+import { invalidate } from '@utils/thirdParty/disk-image-cache'
 import { IOS, WEB } from '@constants'
 import {
   checkLocalError,
   computeHeaders,
-  fixedRemoteImageUrl,
   getAutoSize,
   getLocalCache,
   getLocalCacheStatic,
@@ -127,7 +126,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
   const { src, priority } = props
 
   const [state, setState] = useState<State>(() => ({
-    uri: WEB ? fixedRemoteImageUrl(src) : undefined,
+    uri: WEB ? fixImageProtocol(src) : undefined,
     width: 0,
     height: 0,
     loaded: false,
@@ -217,7 +216,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
 
     recoveriedRef.current = true
     if (fallbackSrc) {
-      setUri(fixedRemoteImageUrl(fallbackSrc))
+      setUri(fixImageProtocol(fallbackSrc))
       return
     }
 
@@ -305,7 +304,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
 
       if (fallbackSrc && uriRef.current !== fallbackSrc && !fallbackedRef.current) {
         fallbackedRef.current = true
-        setUri(fixedRemoteImageUrl(fallbackSrc))
+        setUri(fixImageProtocol(fallbackSrc))
         return
       }
 
@@ -319,7 +318,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
           removeLocalCache(fixImageProtocol(src))
           invalidate(resolveImageUri(src))
         }
-        setUri(fixedRemoteImageUrl(propsRef.current.src))
+        setUri(fixImageProtocol(propsRef.current.src))
       } else {
         commitError(`error: onError [${errorInfo}]`)
       }
@@ -365,7 +364,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
    * 缓存图片: 统一走系统策略, 缓存交由引擎自管
    * - iOS: expo-image 内建磁盘 + 内存缓存 (cachePolicy)
    * - 安卓: FastImage 自带磁盘 + 内存缓存 (getLocalCache 仅登记内存命中记录, 供 preGetLocalCache 短路复用)
-   * 旧 iOS 自研下载缓存 (image-cache-manager 竞速下载到本地 path) 已随 iOS 引擎迁移 expo-image 移除
+   * 旧 iOS 自研下载缓存 (disk-image-cache 竞速下载到本地 path) 已随 iOS 引擎迁移 expo-image 移除
    */
   const cache = useCallback(
     (src: ImageProps['src']) => cacheWithSystemStrategy(src),
@@ -471,7 +470,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
 
       // 不缓存 / WEB 环境: 直接用远端地址
       if (!props.cache || WEB) {
-        setUri(fixedRemoteImageUrl(src))
+        setUri(fixImageProtocol(src))
         return
       }
 
@@ -521,7 +520,7 @@ export function useImageLoader(props: ImageProps, headers: Record<string, string
     }))
 
     if (WEB) {
-      setUri(fixedRemoteImageUrl(src))
+      setUri(fixImageProtocol(src))
       return
     }
 
