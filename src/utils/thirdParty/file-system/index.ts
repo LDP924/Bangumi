@@ -20,4 +20,4 @@ export {
   readAsStringAsync,
   readDirectoryAsync,
   writeAsStringAsync
-} from 'expo-file-system/legacy'
+} from 'expo-file-system'
