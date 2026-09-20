@@ -1,6 +1,10 @@
 name: Build upstream signed APK
 
 on:
+  # schedule 兜底: sync 流 dispatch 挂掉 (如 SYNC_PAT 过期) 时,
+  # 35 分钟后自动发现 master 新提交并构建; 已构建过的 SHA 直接跳过 (幂等)
+  schedule:
+    - cron: '35 4,16 * * *'
   workflow_dispatch:
     inputs:
       release_notes:
@@ -28,6 +32,22 @@ jobs:
           # 拉全量历史, 用于自动生成发行版日志 (git log 上游提交)
           fetch-depth: 0
 
+      - name: Skip if already built (schedule 兜底幂等)
+        id: skip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -pe "require('./app.json').expo.version")
+          TAG="apk-v${VERSION}-${GITHUB_SHA:0:7}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG 已存在, 无需重复构建 (schedule 兜底正常跳过)"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "需要构建: $TAG"
+          fi
+
       - name: Set up Node (LTS 固定, 拒绝漂移)
         uses: actions/setup-node@v6
         with:
@@ -51,6 +71,7 @@ jobs:
           echo "Building $BUILD_TAG (source: $GITHUB_SHA)"
 
       - name: Set up JDK 17
+        if: steps.skip.outputs.should_build != false
         uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
@@ -59,6 +80,7 @@ jobs:
           cache: gradle
 
       - name: Accept SDK licenses (写文件绕交互, 见 run 130/131 教训)
+        if: steps.skip.outputs.should_build != false
         run: |
           # runner 升级 cmdline-tools 20.0 后: setup-android 的 --licenses 交互挂死,
           # yes|sdkmanager 也 Broken pipe 静默拒装 NDK —— 直接写 license hash 文件
@@ -72,6 +94,7 @@ jobs:
           sdkmanager --version
 
       - name: Install NDK versions (装完必验证, 静默失败直接炸)
+        if: steps.skip.outputs.should_build != false
         run: |
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
@@ -87,6 +110,7 @@ jobs:
           echo "NDK 23.1 + 27.1 就绪"
 
       - name: Cache Yarn global cache
+        if: steps.skip.outputs.should_build != false
         uses: actions/cache@v6
         with:
           path: |
@@ -97,6 +121,7 @@ jobs:
             yarn-global-${{ runner.os }}
 
       - name: Decode Android keystore
+        if: steps.skip.outputs.should_build != false
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -115,6 +140,7 @@ jobs:
           echo "Keystore size: $(stat -c%s "$KEYSTORE_PATH") bytes"
 
       - name: Prepare APK source
+        if: steps.skip.outputs.should_build != false
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -161,6 +187,7 @@ jobs:
           NODE
 
       - name: Install JavaScript dependencies
+        if: steps.skip.outputs.should_build != false
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -174,6 +201,7 @@ jobs:
           ./node_modules/.bin/patch-package --patch-dir packages/android/patches || echo "::warning::Some Android patch-package patches did not apply; continuing."
 
       - name: Build Rust native library
+        if: steps.skip.outputs.should_build != false
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/android/rust"
@@ -190,6 +218,7 @@ jobs:
           echo "y" | bash build-android-linux.sh
 
       - name: Clear Metro cache
+        if: steps.skip.outputs.should_build != false
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -197,6 +226,7 @@ jobs:
           echo "Metro/Haste cache cleared before bundling"
 
       - name: Build Release APK
+        if: steps.skip.outputs.should_build != false
         env:
           NODE_ENV: production
           MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
@@ -225,6 +255,7 @@ jobs:
             -Dorg.gradle.parallel=true
 
       - name: Package APK
+        if: steps.skip.outputs.should_build != false
         env:
           ASSET_NAME: ${{ steps.version.outputs.asset_name }}
         run: |
@@ -245,6 +276,7 @@ jobs:
           echo "APK_PATH=$target_apk" >> "$GITHUB_ENV"
 
       - name: Build and package clone APK
+        if: steps.skip.outputs.should_build != false
         env:
           NODE_ENV: production
           MYAPP_RELEASE_STORE_FILE: ${{ env.KEYSTORE_PATH }}
@@ -284,6 +316,7 @@ jobs:
           echo "CLONE_APK_PATH=$target_apk" >> "$GITHUB_ENV"
 
       - name: Validate APK
+        if: steps.skip.outputs.should_build != false
         run: |
           set -euo pipefail
 
@@ -311,6 +344,7 @@ jobs:
           fi
 
       - name: Compose release notes (上游提交日志)
+        if: steps.skip.outputs.should_build != false
         id: notes
         env:
           INPUT_NOTES: ${{ inputs.release_notes }}
@@ -333,6 +367,7 @@ jobs:
           cat /tmp/release_notes.md
 
       - name: Upload release assets
+        if: steps.skip.outputs.should_build != false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_TAG: ${{ steps.version.outputs.build_tag }}

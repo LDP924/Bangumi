@@ -174,8 +174,11 @@ jobs:
             cat /tmp/dispatch_resp.json || true
             sleep 10
           done
-          echo "::error::触发构建失败, 检查 GH_TOKEN 的 actions:write 权限"
-          exit 1
+          # 2026-09-20: dispatch 失败不再拖红整个同步 —— master 已推上去, 同步本体是成功的
+          # 构建流自身带 schedule 兜底 (35 4,16), dispatch 挂了 APK 也会自动构建
+          echo "::warning::dispatch 触发失败 (SYNC_PAT 可能过期, fine-grained 30 天寿命)"
+          echo "::warning::不影响同步结果; build-upstream-apk 的 schedule 会在 35 分钟后自动兜底构建"
+          exit 0
 
       - name: No updates
         if: steps.check.outputs.has_updates == 'false'
