@@ -2,13 +2,13 @@
  * @Author: czy0729
  * @Date: 2020-06-03 09:53:54
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-20 07:40:13
+ * @Last Modified time: 2026-09-23 07:13:17
  */
-import React, { useMemo } from 'react'
+import { useMemo } from 'react'
 import { observer } from 'mobx-react'
 import { TabView } from '@components'
 import { BlurViewTab } from '@_'
-import { _, useStore } from '@stores'
+import { _, systemStore, useStore } from '@stores'
 import { renderTabBar } from './utils'
 import { COMPONENT_MAIN, INITIAL_LAYOUT } from './ds'
 
@@ -29,7 +29,8 @@ function Tab({ renderScene }: TabProps) {
       key={_.orientation}
       initialLayout={INITIAL_LAYOUT}
       lazy
-      lazyPreloadDistance={1}
+      lazyPreloadDistance={0}
+      keepDistance={systemStore.keepDistance}
       navigationState={$.navigationState}
       renderTabBar={renderTabBar}
       renderBackground={elBackground}
