@@ -2,13 +2,13 @@
  * @Author: czy0729
  * @Date: 2022-03-15 00:48:16
  * @Last Modified by: czy0729
- * @Last Modified time: 2024-12-04 22:07:14
+ * @Last Modified time: 2026-09-27 05:11:45
  */
-import React, { useCallback } from 'react'
+import { useCallback } from 'react'
 import { observer } from 'mobx-react'
 import { HeaderV2, HeaderV2Popover } from '@components'
 import { useStore } from '@stores'
-import { open } from '@utils'
+import { getHeaderTitleSize, open } from '@utils'
 import { t } from '@utils/fetch'
 import { TEXT_MENU_BROWSER } from '@constants'
 import { COMPONENT, DATA } from './ds'
@@ -36,9 +36,12 @@ function Header() {
     [$]
   )
 
+  const title = $.params?.name ? `包含${$.params.name}的目录` : '条目目录'
+
   return (
     <HeaderV2
-      title={$.params?.name ? `包含${$.params.name}的目录` : '条目目录'}
+      title={title}
+      headerTitleSize={getHeaderTitleSize(title)}
       alias='条目目录'
       hm={$.hm}
       headerRight={handleHeaderRight}
