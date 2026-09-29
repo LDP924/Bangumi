@@ -2,9 +2,8 @@
  * @Author: czy0729
  * @Date: 2023-04-05 00:01:44
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-20 05:24:02
+ * @Last Modified time: 2026-09-29 02:51:40
  */
-import React from 'react'
 import { StorybookGrid, StorybookPage } from '@components'
 import { ItemCollectionsGrid as Component } from './index'
 import { list } from './index.mock'
@@ -23,8 +22,8 @@ Item.args = list[2]
 export const List = () => (
   <StorybookPage>
     <StorybookGrid space>
-      {list.map(item => (
-        <Component key={item.id} {...item} />
+      {list.map((item, index) => (
+        <Component key={item.id} index={index} {...item} />
       ))}
     </StorybookGrid>
   </StorybookPage>
