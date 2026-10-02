@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2022-09-14 04:50:56
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-03 23:31:47
+ * @Last Modified time: 2026-09-30 20:46:38
  */
 import { asc, getTimestamp } from '@utils'
 import { getPinYinFirstCharacter } from '@utils/thirdParty/pinyin/dict'
@@ -11,29 +11,40 @@ import { DATA_ALPHABET } from '@constants/data'
 /** 预设排序 */
 export const SORT = {
   /** 上映时间 */
-  begin<T extends Record<string, any>>(a: Partial<T> = {}, b: Partial<T> = {}, key: keyof T = 'b') {
-    return (getTimestamp(b[key] || '0000-00-00') || 0) - (getTimestamp(a[key] || '0000-00-00') || 0)
+  begin<T extends Record<string, unknown>>(
+    a: Partial<T> = {},
+    b: Partial<T> = {},
+    key: keyof T = 'b'
+  ) {
+    return (
+      (getTimestamp(String(b[key] || '0000-00-00')) || 0) -
+      (getTimestamp(String(a[key] || '0000-00-00')) || 0)
+    )
   },
 
   /** 名称 */
-  name<T extends Record<string, any>>(a: Partial<T> = {}, b: Partial<T> = {}, key: keyof T = 'c') {
+  name<T extends Record<string, unknown>>(
+    a: Partial<T> = {},
+    b: Partial<T> = {},
+    key: keyof T = 'c'
+  ) {
     return asc(
-      String(getPinYinFirstCharacter(a[key] || '')),
-      String(getPinYinFirstCharacter(b[key] || ''))
+      String(getPinYinFirstCharacter(String(a[key] || ''))),
+      String(getPinYinFirstCharacter(String(b[key] || '')))
     )
   },
 
   /** 评分或排名 */
-  rating<T extends Record<string, any>>(
+  rating<T extends Record<string, unknown>>(
     a: Partial<T> = {},
     b: Partial<T> = {},
     keyScore: keyof T = 's',
     keyRank: keyof T = 'r'
   ) {
-    const sA = a[keyScore] || 0
-    const sB = b[keyScore] || 0
-    const rA = a[keyRank] === undefined ? -10000 : 10000 - a[keyRank]
-    const rB = b[keyRank] === undefined ? -10000 : 10000 - b[keyRank]
+    const sA = Number(a[keyScore] || 0)
+    const sB = Number(b[keyScore] || 0)
+    const rA = a[keyRank] === undefined ? -10000 : 10000 - Number(a[keyRank])
+    const rB = b[keyRank] === undefined ? -10000 : 10000 - Number(b[keyRank])
     return sB + rB - (sA + rA)
   },
 
@@ -43,17 +54,25 @@ export const SORT = {
   },
 
   /** 分数, 也可用于数值比较 */
-  score<T extends Record<string, any>>(a: Partial<T> = {}, b: Partial<T> = {}, key: keyof T = 's') {
+  score<T extends Record<string, unknown>>(
+    a: Partial<T> = {},
+    b: Partial<T> = {},
+    key: keyof T = 's'
+  ) {
     return Number(b[key] || 0) - Number(a[key] || 0)
   },
 
   /** 评分人数 */
-  total<T extends Record<string, any>>(a: Partial<T> = {}, b: Partial<T> = {}, key: keyof T = 'l') {
+  total<T extends Record<string, unknown>>(
+    a: Partial<T> = {},
+    b: Partial<T> = {},
+    key: keyof T = 'l'
+  ) {
     return Number(b[key] || 0) - Number(a[key] || 0)
   }
 }
 
-/** 只返回下标数组对象 */
+/** 季度筛选正则, 匹配放送日期中的 年-月- */
 export const REG_SEASONS = {
   '1月': /-(01|02|03|1|2|3)-/,
   '4月': /-(04|05|06|4|5|6)-/,
@@ -61,46 +80,37 @@ export const REG_SEASONS = {
   '10月': /-(10|11|12)-/
 } as const
 
+/** 地区 */
 export const ANIME_AREA = ['日本', '中国'] as const
 
+/** 类型 */
 export const ANIME_TYPE = ['TV', '剧场版', 'OVA', 'WEB'] as const
 
+/** 名称首字 */
 export const ANIME_FIRST = DATA_ALPHABET
 
+/** 当前日期, 9 月 1 日起提前把下一年纳入年份筛选 */
+const NOW = new Date()
+
+/** 最新可筛选的年份, 9 月前为当前年份, 9 月起为下一年 */
+const LATEST_YEAR = NOW.getFullYear() + (NOW.getMonth() >= 8 ? 1 : 0)
+
+/** 动画年份, 从最新年份倒序生成到 2001 年, 更早的统一归入「2000以前」 */
 export const ANIME_YEAR = [
-  2026,
-  2025,
-  2024,
-  2023,
-  2022,
-  2021,
-  2020,
-  2019,
-  2018,
-  2017,
-  2016,
-  2015,
-  2014,
-  2013,
-  2012,
-  2011,
-  2010,
-  2009,
-  2008,
-  2007,
-  2006,
-  2005,
-  2004,
-  2003,
-  2002,
-  2001,
+  ...Array.from(
+    { length: LATEST_YEAR - 2000 },
+    (__, index) => LATEST_YEAR - index
+  ),
   '2000以前'
 ] as const
 
+/** 放送季度 */
 export const ANIME_BEGIN = ['1月', '4月', '7月', '10月'] as const
 
+/** 放送状态, 对应 Item.st (缺席视为完结) */
 export const ANIME_STATUS = ['连载', '完结', '未播放'] as const
 
+/** 标签, 顺序即 ANIME_TAGS_MAP 的序号 */
 export const ANIME_TAGS = [
   '奇幻',
   '战斗',
@@ -150,10 +160,12 @@ export const ANIME_TAGS = [
   '偶像'
 ] as const
 
+/** 标签 → Item.t 中的下标 */
 export const ANIME_TAGS_MAP = Object.fromEntries(
   ANIME_TAGS.map((item, index) => [item, index])
 ) as Record<(typeof ANIME_TAGS)[number], number>
 
+/** 制作公司, 顺序即 ANIME_OFFICIAL_MAP 的序号 */
 export const ANIME_OFFICIAL = [
   'J.C.STAFF',
   'A-1 Pictures',
@@ -279,10 +291,12 @@ export const ANIME_OFFICIAL = [
   'Yostar Pictures'
 ] as const
 
+/** 制作公司 → Item.o 中的下标 */
 export const ANIME_OFFICIAL_MAP = Object.fromEntries(
   ANIME_OFFICIAL.map((item, index) => [item, index])
 ) as Record<(typeof ANIME_OFFICIAL)[number], number>
 
 export const ANIME_SORT = ['排名', '上映时间', '评分人数', '随机', '名称'] as const
 
+/** 收藏筛选 */
 export const ANIME_COLLECTED = ['隐藏'] as const

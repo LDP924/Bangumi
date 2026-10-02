@@ -2,12 +2,19 @@
  * @Author: czy0729
  * @Date: 2024-06-20 17:35:04
  * @Last Modified by: czy0729
- * @Last Modified time: 2024-11-28 21:06:43
+ * @Last Modified time: 2026-10-01 21:52:50
  */
-import { feedback, info, updateVisibleBottom } from '@utils'
+import { confirm, feedback, getTimestamp, info, updateVisibleBottom } from '@utils'
 import { t } from '@utils/fetch'
-import { TEXT_MENU_FAVOR, TEXT_MENU_LAYOUT } from '@constants'
+import { D1, TEXT_MENU_FAVOR, TEXT_MENU_LAYOUT } from '@constants'
+import { calendarStore } from '@stores'
 import Fetch from './fetch'
+
+/** 解析筛选菜单选中值（'全部' 或 '名称 (数量)' → 名称） */
+const parseFilterValue = (value: string) => {
+  if (value === '全部') return ''
+  return value.split(' (')?.[0] || ''
+}
 
 export default class Action extends Fetch {
   /** 切换布局 */
@@ -55,12 +62,7 @@ export default class Action extends Fetch {
 
   /** 切换改编 */
   onAdapt = (adapt: string) => {
-    let value: string
-    if (adapt === '全部') {
-      value = ''
-    } else {
-      value = adapt.split(' (')?.[0] || ''
-    }
+    const value = parseFilterValue(adapt)
     this.setState({
       adapt: value
     })
@@ -72,12 +74,7 @@ export default class Action extends Fetch {
 
   /** 切换标签 */
   onTag = (tag: string) => {
-    let value: string
-    if (tag === '全部') {
-      value = ''
-    } else {
-      value = tag.split(' (')?.[0] || ''
-    }
+    const value = parseFilterValue(tag)
     this.setState({
       tag: value
     })
@@ -87,14 +84,9 @@ export default class Action extends Fetch {
     })
   }
 
-  /** 切换标签 */
+  /** 切换动画制作 */
   onOrigin = (origin: string) => {
-    let value: string
-    if (origin === '全部') {
-      value = ''
-    } else {
-      value = origin.split(' (')?.[0] || ''
-    }
+    const value = parseFilterValue(origin)
     this.setState({
       origin: value
     })
@@ -111,6 +103,29 @@ export default class Action extends Fetch {
       tag: '',
       origin: ''
     })
+  }
+
+  /**
+   * 换季后放送数据缺失检查
+   * 新番全部没有放送时间数据时, 先静默重拉一次线上数据, 仍缺失则主动询问是否显示未知时间番剧
+   */
+  checkAirTimeMissing = async () => {
+    if (this.state.expand || !this.isAirTimeMissing) return
+    if (getTimestamp() - this.state._airTimeTiped <= D1) return
+
+    await calendarStore.fetchOnAir(true)
+    if (!this.isAirTimeMissing) return
+
+    this.setState({
+      _airTimeTiped: getTimestamp()
+    })
+    this.save()
+
+    confirm(
+      '当前大部分新番没有放送时间数据, 可能因刚换季, 线上与内置数据尚未同步\n是否显示未知时间番剧?',
+      this.onToggleExpand,
+      '提示'
+    )
   }
 
   /** 工具栏设置 */
