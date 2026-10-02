@@ -100,7 +100,9 @@ jobs:
 
           git merge upstream/master --no-edit --no-ff || {
             echo "::warning::出现合并冲突, 启动自动解决策略 (.github 目录强制保留 fork 版本)"
-            # fork 自有的 workflows / scripts 永远保留自己的
+            # fork 自有的 workflows / scripts 永远保留自己的 (冲突路径 HEAD=merge 前 fork 版)
+            # 上游新增的 .github 文件 checkout 恢复不掉, 显式删除
+            git diff HEAD --diff-filter=A --name-only -- .github/ | xargs -r git rm -q -f --
             git checkout HEAD -- .github/workflows/ .github/scripts/ 2>/dev/null || true
             # 剩余未解决冲突则放弃自动合并, 保留现场供人工处理
             if ! git diff --name-only --diff-filter=U | grep -q .; then
@@ -113,8 +115,11 @@ jobs:
             fi
           }
 
-          # 无冲突路径: 同样确保 workflows 不被上游覆盖
-          git checkout HEAD -- .github/workflows/ .github/scripts/ 2>/dev/null || true
+          # 无冲突路径 (2026-10-02 修): merge 自动提交后 HEAD=merge commit,
+          # checkout HEAD 只会恢复 merge 结果自身, 上游 workflow 变更原样跟着 push (Run 486 实锤)
+          # 恢复基准必须用 ORIG_HEAD (= merge 前的 fork 版本), 上游新增文件同样显式删除
+          git diff ORIG_HEAD --diff-filter=A --name-only -- .github/ | xargs -r git rm -q -f --
+          git checkout ORIG_HEAD -- .github/workflows/ .github/scripts/ 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git commit --amend --no-edit
           fi
