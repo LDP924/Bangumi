@@ -4,24 +4,29 @@
  * @Last Modified by: czy0729
  * @Last Modified time: 2026-09-30 22:37:45
  */
+import { sanitizeQuery } from '@_'
 import { otaStore } from '@stores'
 import { t } from '@utils/fetch'
+import { filterDS } from '../ds'
 import Fetch from './fetch'
+import { STATE } from './ds'
 
 import type { ScrollToOffset } from '@components'
-import type { filterDS } from '../ds'
-
-type FilterType = (typeof filterDS)[number]['type']
+import type { FilterType } from '../types'
 
 export default class Action extends Fetch {
   /** 初始化查询配置 */
   initQuery = (tags = []) => {
     this.setState({
       expand: true,
-      query: {
-        ...this.state.query,
-        cate: tags[0]
-      }
+      query: sanitizeQuery(
+        {
+          ...this.state.query,
+          cate: tags[0]
+        },
+        STATE.query,
+        filterDS
+      )
     })
   }
 

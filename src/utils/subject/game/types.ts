@@ -5,13 +5,12 @@
  * @Last Modified time: 2026-08-30 05:57:00
  */
 import type { Loaded } from '@types'
-import type { GAME_CATE, GAME_DEV, GAME_PLATFORM, GAME_PUB, GAME_SORT } from './ds'
+import type { GAME_CATE, GAME_DEV, GAME_NSFW, GAME_PLATFORM, GAME_PUB, GAME_SORT, GAME_TAGS } from './ds'
 
 /** 查询指纹, 由筛选条件序列化得到 */
 export type Finger = string
 
 export type Query = {
-  first?: string
   year?: string | number
 
   /** 平台, 空串表示未筛选 */
@@ -20,11 +19,17 @@ export type Query = {
   /** 类型, 空串表示未筛选 */
   cate?: '' | (typeof GAME_CATE)[number]
 
+  /** 标签, 空串表示未筛选 */
+  tag?: '' | (typeof GAME_TAGS)[number]
+
   /** 开发商, 空串表示未筛选 */
   dev?: '' | (typeof GAME_DEV)[number]
 
   /** 发行商, 空串表示未筛选 */
   pub?: '' | (typeof GAME_PUB)[number]
+
+  /** 分级 ('限制' = NSFW, '未知' = 全年龄, 空串表示未筛选) */
+  x?: '' | (typeof GAME_NSFW)[number]
 
   sort?: (typeof GAME_SORT)[number]
 }
@@ -32,9 +37,6 @@ export type Query = {
 export type Item = {
   /** 条目 ID */
   i: number
-
-  /** 名称首字 */
-  f: string
 
   /** 发行日期 */
   en: string
@@ -51,6 +53,9 @@ export type Item = {
   /** 分类下标, 见 GAME_CATE_MAP */
   ta: number[]
 
+  /** 标签下标数组 (见 ds.ts GAME_TAGS) */
+  tg?: number[]
+
   /** 开发商下标, 见 GAME_DEV_MAP */
   d?: number[]
 
@@ -65,6 +70,9 @@ export type Item = {
 
   /** 外网热度 */
   vc?: number
+
+  /** 敏感标记 (1 = NSFW, 0/缺席 = 全年龄) */
+  x?: number
 }
 
 /** @deprecated 原始压缩数据（unzip 专用） */

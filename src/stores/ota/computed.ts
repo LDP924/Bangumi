@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2023-04-26 14:47:25
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-10-01 07:09:31
+ * @Last Modified time: 2026-10-03 23:18:46
  */
 import { computed } from 'mobx'
 import { pick as advPick } from '@utils/subject/adv'
@@ -10,14 +10,27 @@ import { pick as animePick } from '@utils/subject/anime'
 import { pick as gamePick } from '@utils/subject/game'
 import { pick as hentaiPick } from '@utils/subject/hentai'
 import { pick as mangaPick } from '@utils/subject/manga'
+import { pick as musicPick } from '@utils/subject/music'
 import { pick as nsfwPick } from '@utils/subject/nsfw'
+import { pick as realPick } from '@utils/subject/real'
+import { pick as albumPick } from '@utils/subject/album'
 import { pick as wenkuPick } from '@utils/subject/wenku'
 import State from './state'
 
 import type { UnzipItem as NSFWItem } from '@utils/subject/nsfw/types'
 import type { StoreConstructor, SubjectId } from '@types'
 import type { STATE } from './init'
-import type { ADVItem, AnimeItem, GameItem, HentaiItem, MangaItem, WenkuItem } from './types'
+import type {
+  ADVItem,
+  AnimeItem,
+  GameItem,
+  HentaiItem,
+  MangaItem,
+  MusicItem,
+  RealItem,
+  AlbumItem,
+  WenkuItem
+} from './types'
 
 export default class Computed extends State implements StoreConstructor<typeof STATE> {
   animeSubjectId(pickIndex: number): SubjectId {
@@ -31,7 +44,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
     this.init('anime', true)
 
     return computed(() => {
-      return (this.state.anime[`age_${subjectId}`] || {}) as AnimeItem
+      return (this.state.anime[`anime_${subjectId}`] || {}) as AnimeItem
     }).get()
   }
 
@@ -45,7 +58,7 @@ export default class Computed extends State implements StoreConstructor<typeof S
   manga(subjectId: SubjectId) {
     this.init('manga', true)
     return computed(() => {
-      return (this.state.manga[`mox_${subjectId}`] || {}) as MangaItem
+      return (this.state.manga[`manga_${subjectId}`] || {}) as MangaItem
     }).get()
   }
 
@@ -87,7 +100,21 @@ export default class Computed extends State implements StoreConstructor<typeof S
   wenku(subjectId: SubjectId) {
     this.init('wenku', true)
     return computed(() => {
-      return (this.state.wenku[`wk8_${subjectId}`] || {}) as WenkuItem
+      return (this.state.wenku[`wenku_${subjectId}`] || {}) as WenkuItem
+    }).get()
+  }
+
+  albumSubjectId(pickIndex: number): SubjectId {
+    return computed(() => {
+      const item = albumPick(pickIndex)
+      return item?.i || 0
+    }).get()
+  }
+
+  album(subjectId: SubjectId) {
+    this.init('album', true)
+    return computed(() => {
+      return (this.state.album[`album_${subjectId}`] || {}) as AlbumItem
     }).get()
   }
 
@@ -117,6 +144,36 @@ export default class Computed extends State implements StoreConstructor<typeof S
 
     return computed(() => {
       return (this.state.nsfw[`nsfw_${subjectId}`] || {}) as NSFWItem
+    }).get()
+  }
+
+  musicSubjectId(pickIndex: number): SubjectId {
+    return computed(() => {
+      const item = musicPick(pickIndex)
+      return item?.i || 0
+    }).get()
+  }
+
+  music(subjectId: SubjectId) {
+    this.init('music', true)
+
+    return computed(() => {
+      return (this.state.music[`music_${subjectId}`] || {}) as MusicItem
+    }).get()
+  }
+
+  realSubjectId(pickIndex: number): SubjectId {
+    return computed(() => {
+      const item = realPick(pickIndex)
+      return item?.i || 0
+    }).get()
+  }
+
+  real(subjectId: SubjectId) {
+    this.init('real', true)
+
+    return computed(() => {
+      return (this.state.real[`real_${subjectId}`] || {}) as RealItem
     }).get()
   }
 }

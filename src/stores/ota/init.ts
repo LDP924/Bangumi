@@ -5,17 +5,27 @@
  * @Last Modified time: 2026-10-01 04:54:10
  */
 import type { UnzipItem as NSFWItem } from '@utils/subject/nsfw/types'
-import type { ADVItem, AnimeItem, GameItem, HentaiItem, MangaItem, WenkuItem } from './types'
+import type {
+  ADVItem,
+  AnimeItem,
+  GameItem,
+  HentaiItem,
+  MangaItem,
+  MusicItem,
+  RealItem,
+  AlbumItem,
+  WenkuItem
+} from './types'
 
 /** 命名空间 */
 export const NAMESPACE = 'OTA'
 
 export const STATE = {
   /** 找番剧 */
-  anime: { age_0: {} } as Record<string, Partial<AnimeItem>>,
+  anime: { anime_0: {} } as Record<string, Partial<AnimeItem>>,
 
   /** 找漫画 */
-  manga: { mox_0: {} } as Record<string, Partial<MangaItem>>,
+  manga: { manga_0: {} } as Record<string, Partial<MangaItem>>,
 
   /** 找游戏  */
   game: { game_0: {} } as Record<string, Partial<GameItem>>,
@@ -24,13 +34,22 @@ export const STATE = {
   adv: { adv_0: {} } as Record<string, Partial<ADVItem>>,
 
   /** 找文库 */
-  wenku: { wk8_0: {} } as Record<string, Partial<WenkuItem>>,
+  wenku: { wenku_0: {} } as Record<string, Partial<WenkuItem>>,
+
+  /** 找画集 */
+  album: { album_0: {} } as Record<string, Partial<AlbumItem>>,
 
   /** @deprecated 找 Hentai */
   hentai: { hentai_0: {} } as Record<string, Partial<HentaiItem>>,
 
   /** 找 NSFW */
-  nsfw: { nsfw_0: {} } as Record<string, Partial<NSFWItem>>
+  nsfw: { nsfw_0: {} } as Record<string, Partial<NSFWItem>>,
+
+  /** 找音乐 */
+  music: { music_0: {} } as Record<string, Partial<MusicItem>>,
+
+  /** 找三次元 */
+  real: { real_0: {} } as Record<string, Partial<RealItem>>
 }
 
 export const LOADED = {
@@ -39,6 +58,9 @@ export const LOADED = {
   game: false,
   adv: false,
   wenku: false,
+  album: false,
   hentai: false,
-  nsfw: false
+  nsfw: false,
+  music: false,
+  real: false
 }

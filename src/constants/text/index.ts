@@ -23,13 +23,25 @@ export const TEXT_EMPTY = '好像什么都没有'
 export const TEXT_18X = `好像什么都没有\n可能需要你到网页端的设置页面\n打开「显示受限条目内容」设置`
 
 /** 找番剧静态数据最后更新时间 */
-export const TEXT_UPDATE_ANIME = '2026-07-13'
+export const TEXT_UPDATE_ANIME = '2026-10-05'
 
 /** 找游戏、ADV 静态数据最后更新时间 */
 export const TEXT_UPDATE_GAME = '2026-09-30'
 
 /** 找漫画最后更新时间 */
-export const TEXT_UPDATE_MANGA = '2024-09-23'
+export const TEXT_UPDATE_MANGA = '2026-10-04'
+
+/** 找文库最后更新时间 */
+export const TEXT_UPDATE_WENKU = '2026-10-04'
+
+/** 找画集最后更新时间 */
+export const TEXT_UPDATE_ALBUM = '2026-10-05'
+
+/** 找音乐静态数据最后更新时间 */
+export const TEXT_UPDATE_MUSIC = '2026-10-03'
+
+/** 找三次元静态数据最后更新时间 */
+export const TEXT_UPDATE_REAL = '2026-10-03'
 
 /** 本地整合目录最后更新时间 */
 export const TEXT_UPDATE_CATALOGS = '2026-04-11'
@@ -41,20 +53,23 @@ export const TEXT_UPDATE_SPONSOR = '2026-04-14'
 export const TEXT_UPDATE_TYPERANK = '2026-04-12'
 
 /** 找番剧 (NSFW) 静态数据最后更新时间 */
-export const TEXT_UPDATE_NSFW = '2025-11-06'
+export const TEXT_UPDATE_NSFW = '2026-10-02'
 
 /** 开发者话语最后更新时间 */
 export const TEXT_UPDATE_QIAFAN = '2026-05'
 
 /** 找条目数目 */
 export const TEXT_TOTAL = {
-  番剧: 5113,
+  番剧: 23037,
   游戏: 16385,
   ADV: 15037,
-  漫画: 10622,
-  文库: 2740,
+  漫画: 25424,
+  文库: 3681,
+  画集: 1434,
   Hentai: 1036,
-  NSFW: 5987
+  NSFW: 21543,
+  音乐: 27657,
+  三次元: 8626
 } as const
 
 /** 空格 */

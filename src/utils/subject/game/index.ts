@@ -7,7 +7,7 @@
 import { ensureRecordLimit } from '../../cache'
 import { getTimestamp } from '../../index'
 import { decode, get } from '../../thirdParty/protobuf'
-import { SORT } from '../anime'
+import { SEARCH_RESULT_LIMIT, SORT } from '../anime'
 import {
   GAME_CATE,
   GAME_CATE_MAP,
@@ -15,14 +15,15 @@ import {
   GAME_DEV,
   GAME_DEV_ALIAS,
   GAME_DEV_MAP,
-  GAME_FIRST,
   GAME_JUNK,
+  GAME_NSFW,
   GAME_PLATFORM,
   GAME_PLATFORM_MAP,
   GAME_PUB,
   GAME_PUB_ALIAS,
   GAME_PUB_MAP,
   GAME_SORT,
+  GAME_TAGS,
   GAME_YEAR
 } from './ds'
 
@@ -36,14 +37,15 @@ export {
   GAME_DEV,
   GAME_DEV_ALIAS,
   GAME_DEV_MAP,
-  GAME_FIRST,
   GAME_JUNK,
+  GAME_NSFW,
   GAME_PLATFORM,
   GAME_PLATFORM_MAP,
   GAME_PUB,
   GAME_PUB_ALIAS,
   GAME_PUB_MAP,
   GAME_SORT,
+  GAME_TAGS,
   GAME_YEAR
 }
 
@@ -77,6 +79,12 @@ GAME_PUB_ALIAS.forEach(group => {
 
 /** 缓存搜索结果 */
 const SEARCH_CACHE: Record<Finger, SearchResult> = {}
+
+/** 标签筛选: 名 → bin 的 tg 下标 (下标 0 合法, 不可用 indexOf 真值判断) */
+const GAME_TAG_MATCH: Record<string, number> = {}
+GAME_TAGS.forEach((tag, index) => {
+  GAME_TAG_MATCH[tag] = index
+})
 
 let game: Item[] = []
 
@@ -117,7 +125,7 @@ export function search(query: Query): SearchResult {
 
   // 查询指纹
   const finger = JSON.stringify(query || {})
-  const { first, year, platform, cate, dev, pub, sort } = query || {}
+  const { year, platform, cate, dev, pub, tag, x, sort } = query || {}
 
   if (sort !== '随机' && SEARCH_CACHE[finger]) {
     return SEARCH_CACHE[finger]
@@ -133,8 +141,6 @@ export function search(query: Query): SearchResult {
   data.forEach((item, index) => {
     let match = true
 
-    if (match && first) match = first === item.f
-
     // en: '2020-02-06'
     if (match && year) match = yearReg.test(item.en || '0000')
 
@@ -144,17 +150,24 @@ export function search(query: Query): SearchResult {
     // ta: ['格斗', '角色扮演']
     if (match && cate) match = item.ta?.includes(GAME_CATE_MAP[cate])
 
+    // tg: 标签下标 (见 GAME_TAGS, 下标 0 合法)
+    const tagIndex = tag ? GAME_TAG_MATCH[tag] : undefined
+    if (match && tag) match = typeof tagIndex === 'number' && !!item.tg?.includes(tagIndex)
+
     // d: ['Nintendo']
     if (match && dev) match = DEV_MATCH[dev]?.some(num => item.d?.includes(num)) ?? false
 
     // p: ['Nintendo']
     if (match && pub) match = PUB_MATCH[pub]?.some(num => item.p?.includes(num)) ?? false
 
+    // x: '限制' = NSFW, '未知' = 全年龄
+    if (match && x) match = x === '限制' ? item.x === 1 : x === '未知' ? !item.x : true
+
     if (match) _list.push(index)
   })
 
   switch (sort) {
-    case '发行':
+    case '发行时间':
       _list = _list.sort((a, b) => SORT.begin(data[a], data[b], 'en'))
       break
 
@@ -166,25 +179,15 @@ export function search(query: Query): SearchResult {
       _list = _list.sort((a, b) => SORT.total(data[a], data[b], 'l'))
       break
 
-    case '外网评分':
-      _list.sort((a, b) => SORT.score(data[a], data[b], 'vs'))
-      break
-
-    case '外网热度':
-      _list.sort((a, b) => SORT.score(data[a], data[b], 'vc'))
-      break
-
     case '随机':
       _list = _list.sort(() => SORT.random())
-      break
-
-    case '名称':
-      _list = _list.sort((a, b) => SORT.name(data[a], data[b], 'f'))
       break
 
     default:
       break
   }
+
+  _list = _list.slice(0, SEARCH_RESULT_LIMIT)
 
   const result: SearchResult = {
     list: _list,

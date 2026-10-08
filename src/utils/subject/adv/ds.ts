@@ -2,13 +2,9 @@
  * @Author: czy0729
  * @Date: 2022-09-13 21:03:42
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-30 19:50:45
+ * @Last Modified time: 2026-10-04 05:10:27
  */
-import { DATA_ALPHABET } from '@constants/data'
 import { ANIME_COLLECTED, ANIME_YEAR } from '../anime'
-
-/** 名称首字, 复用动画字母表 */
-export const ADV_FIRST = DATA_ALPHABET
 
 /** 年份筛选, 复用动画年份列表 */
 export const ADV_YEAR = ANIME_YEAR
@@ -191,7 +187,7 @@ export const ADV_DEV_ALIAS = [
   ['RUNE', 'ルネ']
 ] as const
 
-export const ADV_SORT = ['发行', '排名', '评分人数', '随机', '名称'] as const
+export const ADV_SORT = ['发行', '排名', '评分人数', '随机'] as const
 
 /** 时长档位 */
 export const ADV_PLAYTIME = ['超长', '长', '中', '短', '超短', '不明'] as const
@@ -207,3 +203,144 @@ export const ADV_PLAYTIME_MAP = {
 
 /** 是否有汉化 */
 export const ADV_CN = ['有', '无'] as const
+
+/**
+ * 标签筛选 (全量 type=4 条目出现次数 top100, 下标即 bin 的 ta)
+ *  - 已剔除年份标签, 同义标签 (大小写 / 繁简 / 日文新字体) 自动合并
+ *  - 与 web/standalone/adv 的 rule.loadTags 同步维护, 重建后如有变化需同步此表
+ */
+export const ADV_TAGS = [
+  'ADV',
+  'Galgame',
+  'RPG',
+  '拔作',
+  'R18',
+  '同人',
+  'ACT',
+  'SLG',
+  '黄油',
+  '国产',
+  '手游',
+  'SIM',
+  '合集',
+  '独立游戏',
+  'BL',
+  '解谜',
+  'PUZ',
+  '恐怖',
+  'VN',
+  'ARPG',
+  '纯爱',
+  '萝莉',
+  '百合',
+  'NTR',
+  'STG',
+  'FPS',
+  '后宫',
+  '童年',
+  '休闲',
+  'DLC',
+  '动态CG',
+  '巨乳',
+  'FTG',
+  '悬疑',
+  'MUG',
+  '妹',
+  'JRPG',
+  '凌辱',
+  'HRPG',
+  '人妻',
+  '冒险',
+  'SRPG',
+  'Roguelike',
+  '游戏性',
+  '3D',
+  '像素',
+  'FD',
+  'AAVG',
+  'TPS',
+  '调教',
+  '猎奇',
+  '废萌',
+  '推理',
+  'RTS',
+  'ERO-RPG',
+  'SPG',
+  'RAC',
+  '幼驯染',
+  '卡牌',
+  '桌游',
+  '科幻',
+  'MMORPG',
+  '日系',
+  '多人',
+  '网游',
+  '恋爱',
+  '横版',
+  '经典',
+  '策略',
+  'ERO-ADV',
+  '模拟经营',
+  '触手',
+  '东方',
+  'freegame',
+  '小游戏',
+  '治愈',
+  '奇幻',
+  '伪娘',
+  '妊娠',
+  '神作',
+  '女性向',
+  '养成',
+  '姐',
+  '战棋',
+  'down',
+  'オトメイト',
+  '页游',
+  '催眠',
+  '战斗',
+  '历史',
+  'ERO-SLG',
+  '熟女',
+  'Otomate',
+  '巫女',
+  '东方Project',
+  '硬盘已存',
+  'NS2',
+  '开放世界',
+  '无修正',
+  'EA'
+] as const
+
+/** 平台筛选 (下标即 bin 的 pl, 名单外的平台不进 pl) */
+export const ADV_PLATFORM = [
+  'PC',
+  'PSP',
+  'PSV',
+  'PS2',
+  'PS3',
+  'PS4',
+  'PS',
+  'PS5',
+  'DC',
+  'PC-98',
+  'Mac',
+  'Web',
+  'NDS',
+  '3DS',
+  'GBA',
+  'iOS',
+  'Android',
+  'NS',
+  'X360',
+  'Wii',
+  'WiiU',
+  'SFC',
+  'FC',
+  'Arcade'
+] as const
+
+/** 平台名 → Item.pl 中的下标 */
+export const ADV_PLATFORM_MAP = Object.fromEntries(
+  ADV_PLATFORM.map((item, index) => [item, index])
+) as Record<(typeof ADV_PLATFORM)[number], number>

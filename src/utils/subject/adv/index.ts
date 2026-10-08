@@ -2,27 +2,37 @@
  * @Author: czy0729
  * @Date: 2022-09-22 03:34:48
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-08-30 05:56:10
+ * @Last Modified time: 2026-10-04 05:10:39
  */
 import { ensureRecordLimit } from '../../cache'
 import { getTimestamp } from '../../index'
 import { decode, get } from '../../thirdParty/protobuf'
-import { SORT } from '../anime'
+import { SEARCH_RESULT_LIMIT, SORT } from '../anime'
 import {
   ADV_COLLECTED,
   ADV_DEV,
   ADV_DEV_ALIAS,
   ADV_DEV_MAP,
-  ADV_FIRST,
+  ADV_PLATFORM,
+  ADV_PLATFORM_MAP,
   ADV_PLAYTIME_MAP,
   ADV_SORT,
+  ADV_TAGS,
   ADV_YEAR
 } from './ds'
 
 import type { SubjectId } from '@types'
 import type { CompressedItem, Finger, Item, Query, SearchResult, UnzipItem } from './types'
 
-export { ADV_COLLECTED, ADV_DEV, ADV_DEV_MAP, ADV_FIRST, ADV_SORT, ADV_YEAR }
+export {
+  ADV_COLLECTED,
+  ADV_DEV,
+  ADV_DEV_MAP,
+  ADV_PLATFORM,
+  ADV_SORT,
+  ADV_TAGS,
+  ADV_YEAR
+}
 
 /** 开发商筛选: 名 → 可命中的 d 集合 (d 为 ADV_DEV 的 1-based 下标), 别名同组共享 */
 const DEV_MATCH: Record<string, number[]> = {}
@@ -36,6 +46,12 @@ ADV_DEV_ALIAS.forEach(group => {
   group.forEach(name => {
     DEV_MATCH[name] = nums
   })
+})
+
+/** 标签筛选: 名 → 可命中的 ta 下标 (下标 0 合法, 不可用 indexOf 真值判断) */
+const TAG_MATCH: Record<string, number> = {}
+ADV_TAGS.forEach((tag, index) => {
+  TAG_MATCH[tag] = index
 })
 
 /** 缓存搜索结果 */
@@ -80,7 +96,7 @@ export function search(query: Query): SearchResult {
 
   // 查询指纹
   const finger = JSON.stringify(query || {})
-  const { first, year, dev, playtime, cn, x, sort } = query || {}
+  const { tag, platform, year, dev, playtime, cn, x, sort } = query || {}
 
   if (sort !== '随机' && SEARCH_CACHE[finger]) {
     return SEARCH_CACHE[finger]
@@ -92,10 +108,16 @@ export function search(query: Query): SearchResult {
     yearReg = new RegExp(year === '2000以前' ? '^(2000|1\\d{3})' : `^(${year})`)
   }
 
+  const tagIndex = tag ? TAG_MATCH[tag] : undefined
+  const platformIndex = platform ? ADV_PLATFORM_MAP[platform] : undefined
+
   const data = getData()
   data.forEach((item, index) => {
     let match = true
-    if (match && first) match = item.f !== undefined && first === item.f
+    if (match && tag) match = typeof tagIndex === 'number' && !!item.ta?.includes(tagIndex)
+    if (match && platform) {
+      match = typeof platformIndex === 'number' && !!item.pl?.includes(platformIndex)
+    }
     if (match && year) match = yearReg.test(item.en)
     if (match && dev) match = DEV_MATCH[dev]?.includes(item.d) ?? false
     if (match && playtime) {
@@ -130,13 +152,11 @@ export function search(query: Query): SearchResult {
       _list = _list.sort(() => SORT.random())
       break
 
-    case '名称':
-      _list = _list.sort((a, b) => SORT.name(data[a], data[b], 't'))
-      break
-
     default:
       break
   }
+
+  _list = _list.slice(0, SEARCH_RESULT_LIMIT)
 
   const result: SearchResult = {
     list: _list,

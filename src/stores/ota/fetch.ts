@@ -4,87 +4,75 @@
  * @Last Modified by: czy0729
  * @Last Modified time: 2026-10-01 05:51:38
  */
-import { pick } from '@utils'
 import { gets } from '@utils/kv'
 import { CDN_ADV_DETAIL } from '@constants/cdn/adv'
+import { CDN_ALBUM_DETAIL } from '@constants/cdn/album'
+import { CDN_ANIME_DETAIL } from '@constants/cdn/anime'
 import { CDN_GAME_DETAIL } from '@constants/cdn/game'
+import { CDN_MANGA_DETAIL } from '@constants/cdn/manga'
+import { CDN_MUSIC_DETAIL } from '@constants/cdn/music'
+import { CDN_NSFW_DETAIL } from '@constants/cdn/nsfw'
+import { CDN_REAL_DETAIL } from '@constants/cdn/real'
+import { CDN_WENKU_DETAIL } from '@constants/cdn/wenku'
 import Computed from './computed'
-import { fetchDetails, isFailed, isRetried, log } from './utils'
+import { fetchDetailPage, fetchDetails } from './utils'
 
 import type { ResultData } from '@utils/kv/type'
 import type { UnzipItem as NSFWItem } from '@utils/subject/nsfw/types'
 import type { SubjectId } from '@types'
-import type { ADVItem, AnimeItem, GameItem, HentaiItem, MangaItem, WenkuItem } from './types'
+import type {
+  ADVItem,
+  AnimeItem,
+  GameItem,
+  AlbumItem,
+  HentaiItem,
+  MangaItem,
+  MusicItem,
+  RealItem,
+  WenkuItem
+} from './types'
 
 export default class Fetch extends Computed {
+  /** 番剧详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   fetchAnime = async (subjectId: SubjectId) => {
     if (!subjectId) return
 
-    const key = `age_${subjectId}`
-    if (!subjectId || key in this.state.anime) return
+    const key = `anime_${subjectId}`
+    if (key in this.state.anime) return
 
-    const datas = await gets<ResultData<AnimeItem>>([key])
-    if (datas) {
-      const data: Record<string, Partial<AnimeItem>> = {}
-      Object.keys(datas).forEach(itemKey => {
-        const item = datas[itemKey]
-        if (item && typeof item === 'object') {
-          data[itemKey] = item
-        } else {
-          data[itemKey] = {}
-        }
-      })
-      this.setState({
-        anime: data
-      })
-      this.save('anime')
-    }
+    const data = await fetchDetails<AnimeItem>(
+      [subjectId],
+      'anime',
+      CDN_ANIME_DETAIL,
+      /** cn 可选 (bgm 条目可能无中文名, 仅 jp), 不能作为有效性依据 */
+      item => !!(item.cn || item.jp)
+    )
+    if (!Object.keys(data).length) return
+
+    this.setState({
+      anime: data
+    })
+    this.save('anime')
   }
 
+  /** 番剧详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onAnimePage = async (list: number[]) => {
-    if (!list.length) return
-
-    const keys: string[] = []
-    list.forEach(index => {
-      const subjectId = this.animeSubjectId(index)
-      const key = `age_${subjectId}`
-      if (!subjectId || key in this.state.anime) return
-      keys.push(key)
+    const data = await fetchDetailPage<AnimeItem>({
+      list,
+      name: 'anime',
+      label: 'onAnimePage',
+      cache: this.state.anime,
+      subjectId: index => this.animeSubjectId(index),
+      getUrl: CDN_ANIME_DETAIL,
+      isLoaded: item => !!(item.cn || item.jp),
+      hasCover: item => !!item.image
     })
-    if (!keys.length) return
+    if (!Object.keys(data).length) return
 
-    const datas = await gets<ResultData<AnimeItem>>(keys)
-    if (datas) {
-      const data: Record<string, Partial<AnimeItem>> = {}
-      Object.keys(datas).forEach(itemKey => {
-        const item = datas[itemKey]
-        if (item && typeof item === 'object') {
-          data[itemKey] = pick(item, [
-            'id',
-            'ageId',
-            'image',
-            'cn',
-            'jp',
-            'ep',
-            'type',
-            'status',
-            'begin',
-            'tags',
-            'official',
-            'origin',
-            'score',
-            'rank',
-            'total'
-          ])
-        } else {
-          data[itemKey] = {}
-        }
-      })
-      this.setState({
-        anime: data
-      })
-      this.save('anime')
-    }
+    this.setState({
+      anime: data
+    })
+    this.save('anime')
   }
 
   fetchGame = async (subjectId: SubjectId) => {
@@ -113,31 +101,15 @@ export default class Fetch extends Computed {
 
   /** 游戏详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onGamePage = async (list: number[]) => {
-    if (!list.length) return
-
-    /** 判重: 无详情且本轮未失败过的直接请求, 已加载但缺封面的每轮冷启动重试一次 */
-    const subjectIds: SubjectId[] = []
-    list.forEach(index => {
-      const subjectId = this.gameSubjectId(index)
-      if (!subjectId) return
-
-      const key = `game_${subjectId}`
-      const item = this.state.game[key] as Partial<GameItem> | undefined
-      if (item?.t) {
-        if (item.c || isRetried(key)) return
-      } else if (isFailed(key)) {
-        return
-      }
-      subjectIds.push(subjectId)
-    })
-    if (!subjectIds.length) return
-
-    const data = await fetchDetails<GameItem>(subjectIds, 'game', CDN_GAME_DETAIL, item => !!item.t)
-    log('onGamePage', {
-      total: list.length,
-      requested: subjectIds.length,
-      loaded: Object.keys(data).length,
-      noCover: Object.keys(data).filter(key => !data[key].c)
+    const data = await fetchDetailPage<GameItem>({
+      list,
+      name: 'game',
+      label: 'onGamePage',
+      cache: this.state.game,
+      subjectId: index => this.gameSubjectId(index),
+      getUrl: CDN_GAME_DETAIL,
+      isLoaded: item => !!item.t,
+      hasCover: item => !!item.c
     })
     if (!Object.keys(data).length) return
 
@@ -149,36 +121,15 @@ export default class Fetch extends Computed {
 
   /** ADV 详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onADVPage = async (list: number[]) => {
-    if (!list.length) return
-
-    /** 判重: 无详情且本轮未失败过的直接请求, 已加载但缺封面的每轮冷启动重试一次 */
-    const subjectIds: SubjectId[] = []
-    list.forEach(index => {
-      const subjectId = this.advSubjectId(index)
-      if (!subjectId) return
-
-      const key = `adv_${subjectId}`
-      const item = this.state.adv[key] as Partial<ADVItem> | undefined
-      if (item?.title) {
-        if (item.cover || isRetried(key)) return
-      } else if (isFailed(key)) {
-        return
-      }
-      subjectIds.push(subjectId)
-    })
-    if (!subjectIds.length) return
-
-    const data = await fetchDetails<ADVItem>(
-      subjectIds,
-      'adv',
-      CDN_ADV_DETAIL,
-      item => !!item.title
-    )
-    log('onADVPage', {
-      total: list.length,
-      requested: subjectIds.length,
-      loaded: Object.keys(data).length,
-      noCover: Object.keys(data).filter(key => !data[key].cover)
+    const data = await fetchDetailPage<ADVItem>({
+      list,
+      name: 'adv',
+      label: 'onADVPage',
+      cache: this.state.adv,
+      subjectId: index => this.advSubjectId(index),
+      getUrl: CDN_ADV_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
     })
     if (!Object.keys(data).length) return
 
@@ -188,80 +139,64 @@ export default class Fetch extends Computed {
     this.save('adv')
   }
 
+  /** 漫画详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onMangaPage = async (list: number[]) => {
-    if (!list.length) return
-
-    const keys: string[] = []
-    list.forEach(index => {
-      const subjectId = this.mangaSubjectId(index)
-      const key = `mox_${subjectId}`
-      if (!subjectId || key in this.state.manga) return
-      keys.push(key)
+    const data = await fetchDetailPage<MangaItem>({
+      list,
+      name: 'manga',
+      label: 'onMangaPage',
+      cache: this.state.manga,
+      subjectId: index => this.mangaSubjectId(index),
+      getUrl: CDN_MANGA_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
     })
-    if (!keys.length) return
+    if (!Object.keys(data).length) return
 
-    const datas = await gets<ResultData<MangaItem>>(keys)
-    if (datas) {
-      const data: Record<string, Partial<MangaItem>> = {}
-      Object.keys(datas).forEach(itemKey => {
-        const item = datas[itemKey]
-        if (item && typeof item === 'object') {
-          data[itemKey] = pick(item, [
-            'id',
-            'mid',
-            'title',
-            'ep',
-            'author',
-            'status',
-            'cates',
-            'publish',
-            'update',
-            'hot',
-            'score',
-            'rank',
-            'total',
-            'image',
-            'end'
-          ])
-        } else {
-          data[itemKey] = {}
-        }
-      })
-      this.setState({
-        manga: data
-      })
-      this.save('manga')
-    }
+    this.setState({
+      manga: data
+    })
+    this.save('manga')
   }
 
+  /** 文库详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onWenkuPage = async (list: number[]) => {
-    if (!list.length) return
-
-    const keys: string[] = []
-    list.forEach(index => {
-      const subjectId = this.wenkuSubjectId(index)
-      const key = `wk8_${subjectId}`
-      if (!subjectId || key in this.state.wenku) return
-      keys.push(key)
+    const data = await fetchDetailPage<WenkuItem>({
+      list,
+      name: 'wenku',
+      label: 'onWenkuPage',
+      cache: this.state.wenku,
+      subjectId: index => this.wenkuSubjectId(index),
+      getUrl: CDN_WENKU_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
     })
-    if (!keys.length) return
+    if (!Object.keys(data).length) return
 
-    const datas = await gets<ResultData<WenkuItem>>(keys)
-    if (datas) {
-      const data: Record<string, Partial<WenkuItem>> = {}
-      Object.keys(datas).forEach(itemKey => {
-        const item = datas[itemKey]
-        if (item && typeof item === 'object') {
-          data[itemKey] = item
-        } else {
-          data[itemKey] = {}
-        }
-      })
-      this.setState({
-        wenku: data
-      })
-      this.save('wenku')
-    }
+    this.setState({
+      wenku: data
+    })
+    this.save('wenku')
+  }
+
+  /** 画集详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
+  onAlbumPage = async (list: number[]) => {
+    const data = await fetchDetailPage<AlbumItem>({
+      list,
+      name: 'album',
+      label: 'onAlbumPage',
+      cache: this.state.album,
+      subjectId: index => this.albumSubjectId(index),
+      getUrl: CDN_ALBUM_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
+    })
+    if (!Object.keys(data).length) return
+
+    this.setState({
+      album: data
+    })
+    this.save('album')
   }
 
   onHentaiPage = async (list: number[]) => {
@@ -294,33 +229,63 @@ export default class Fetch extends Computed {
     }
   }
 
+  /** NSFW 详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
   onNSFWPage = async (list: number[]) => {
-    if (!list.length) return
-
-    const keys: string[] = []
-    list.forEach(index => {
-      const subjectId = this.nsfwSubjectId(index)
-      const key = `nsfw_${subjectId}`
-      if (!subjectId || key in this.state.nsfw) return
-      keys.push(key)
+    const data = await fetchDetailPage<NSFWItem>({
+      list,
+      name: 'nsfw',
+      label: 'onNSFWPage',
+      cache: this.state.nsfw,
+      subjectId: index => this.nsfwSubjectId(index),
+      getUrl: CDN_NSFW_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
     })
-    if (!keys.length) return
+    if (!Object.keys(data).length) return
 
-    const datas = await gets<ResultData<NSFWItem>>(keys)
-    if (datas) {
-      const data: Record<string, Partial<NSFWItem>> = {}
-      Object.keys(datas).forEach(itemKey => {
-        const item = datas[itemKey]
-        if (item && typeof item === 'object') {
-          data[itemKey] = item
-        } else {
-          data[itemKey] = {}
-        }
-      })
-      this.setState({
-        nsfw: data
-      })
-      this.save('nsfw')
-    }
+    this.setState({
+      nsfw: data
+    })
+    this.save('nsfw')
+  }
+
+  /** 音乐详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
+  onMusicPage = async (list: number[]) => {
+    const data = await fetchDetailPage<MusicItem>({
+      list,
+      name: 'music',
+      label: 'onMusicPage',
+      cache: this.state.music,
+      subjectId: index => this.musicSubjectId(index),
+      getUrl: CDN_MUSIC_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
+    })
+    if (!Object.keys(data).length) return
+
+    this.setState({
+      music: data
+    })
+    this.save('music')
+  }
+
+  /** 三次元详情: CDN 加密单文件 (每条一文件, Crypto.get 解密) */
+  onRealPage = async (list: number[]) => {
+    const data = await fetchDetailPage<RealItem>({
+      list,
+      name: 'real',
+      label: 'onRealPage',
+      cache: this.state.real,
+      subjectId: index => this.realSubjectId(index),
+      getUrl: CDN_REAL_DETAIL,
+      isLoaded: item => !!item.title,
+      hasCover: item => !!item.cover
+    })
+    if (!Object.keys(data).length) return
+
+    this.setState({
+      real: data
+    })
+    this.save('real')
   }
 }

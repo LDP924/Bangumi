@@ -159,6 +159,27 @@ export default {
   'Manga.切换布局': 'Manga.switchLayout',
   'Manga.更多': 'Manga.onPage',
 
+  Wenku: 'Wenku',
+  'Wenku.跳转': 'Wenku.to',
+  'Wenku.选择': 'Wenku.onSelect',
+  'Wenku.到顶': 'Wenku.scrollToTop',
+  'Wenku.切换布局': 'Wenku.switchLayout',
+  'Wenku.更多': 'Wenku.onPage',
+
+  Album: 'Album',
+  'Album.跳转': 'Album.to',
+  'Album.选择': 'Album.onSelect',
+  'Album.到顶': 'Album.scrollToTop',
+  'Album.切换布局': 'Album.switchLayout',
+  'Album.更多': 'Album.onPage',
+
+  画集: 'Album',
+  '画集.跳转': 'Album.to',
+  '画集.选择': 'Album.onSelect',
+  '画集.到顶': 'Album.scrollToTop',
+  '画集.切换布局': 'Album.switchLayout',
+  '画集.更多': 'Album.onPage',
+
   游戏: 'Game',
   '游戏.跳转': 'Game.to',
   '游戏.选择': 'Game.onSelect',
@@ -194,6 +215,20 @@ export default {
   'NSFW.到顶': 'NSFW.scrollToTop',
   'NSFW.切换布局': 'NSFW.switchLayout',
   'NSFW.更多': 'NSFW.onPage',
+
+  Music: 'Music',
+  'Music.跳转': 'Music.to',
+  'Music.选择': 'Music.onSelect',
+  'Music.到顶': 'Music.scrollToTop',
+  'Music.切换布局': 'Music.switchLayout',
+  'Music.更多': 'Music.onPage',
+
+  Real: 'Real',
+  'Real.跳转': 'Real.to',
+  'Real.选择': 'Real.onSelect',
+  'Real.到顶': 'Real.scrollToTop',
+  'Real.切换布局': 'Real.switchLayout',
+  'Real.更多': 'Real.onPage',
 
   维基人: 'Wiki',
   '维基人.右上角菜单': 'Wiki.topRightMenu',
