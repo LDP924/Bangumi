@@ -2,23 +2,24 @@
  * @Author: czy0729
  * @Date: 2019-10-01 22:12:14
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-12 03:23:01
+ * @Last Modified time: 2026-10-13 12:00:00
+ *
+ * 人物近况条目
  */
-import { useMemo } from 'react'
 import { View } from 'react-native'
 import { observer } from 'mobx-react'
-import { Avatar, Cover, Flex, flexStyle, Iconfont, Katakana, Text, Touchable } from '@components'
+import { Avatar, Cover, Flex, Iconfont, Katakana, Text, Touchable } from '@components'
 import { getCoverSrc } from '@components/cover/utils'
-import { InView, Stars, Tag } from '@_'
-import { _ } from '@stores'
-import { cnjp, date, getTimestamp, HTMLDecode, stl, x18 } from '@utils'
+import { InView, Manage, Stars, Tag } from '@_'
+import { _, collectionStore, uiStore } from '@stores'
+import { cnjp, date, getAction, getTimestamp, HTMLDecode, stl, x18 } from '@utils'
 import { t } from '@utils/fetch'
 import { useNavigation } from '@utils/hooks'
-import { IMG_SUBJECT_ONLY, MODEL_SUBJECT_TYPE } from '@constants'
+import { IMG_SUBJECT_ONLY, MODEL_COLLECTION_STATUS, MODEL_SUBJECT_TYPE } from '@constants'
 import { COMPONENT, COVER_HEIGHT, COVER_WIDTH } from './ds'
 import { memoStyles } from './styles'
 
-import type { MonoId, SubjectTypeCn } from '@types'
+import type { CollectionStatus, MonoId, SubjectTypeCn } from '@types'
 import type { Props } from './types'
 
 function ItemRecents({
@@ -42,7 +43,22 @@ function ItemRecents({
   const left = cnjp(name, nameJP)
   const right = cnjp(nameJP, name)
   const typeCn = MODEL_SUBJECT_TYPE.getTitle<SubjectTypeCn>(type)
-  const numberOfLines = info?.length >= 40 ? 2 : 3
+  const collection = collectionStore.collect(id, typeCn)
+  const isNSFW = x18(id, name || nameJP)
+  const topActors = actors.slice(0, 4)
+
+  const handlePressManage = () => {
+    uiStore.showManageModal(
+      {
+        subjectId: id,
+        title: left,
+        desc: right,
+        status: MODEL_COLLECTION_STATUS.getValue<CollectionStatus>(collection),
+        action: getAction(typeCn)
+      },
+      '人物近况'
+    )
+  }
 
   const handlePressSubject = () => {
     navigation.push('Subject', {
@@ -69,9 +85,6 @@ function ItemRecents({
       monoId: actorId
     })
   }
-
-  /** 稳定 style 引用, 避免每次渲染生成新数组击穿子组件 memo */
-  const titleStyle = useMemo(() => stl(flexStyle({ align: 'start' }), _.container.block), [_])
 
   return (
     <>
@@ -100,12 +113,9 @@ function ItemRecents({
 
         <Flex.Item style={_.ml.md}>
           <Flex style={styles.content} direction='column' justify='between' align='start'>
-            <Touchable
-              style={titleStyle}
-              onPress={handlePressSubject}
-            >
+            <Touchable style={styles.title} onPress={handlePressSubject}>
               <Flex.Item>
-                <Katakana.Provider size={13} bold numberOfLines={numberOfLines}>
+                <Katakana.Provider size={13} bold numberOfLines={2}>
                   <Katakana size={13} bold>
                     {left}
                   </Katakana>
@@ -116,11 +126,20 @@ function ItemRecents({
                     </Katakana>
                   )}
                 </Katakana.Provider>
+
+                {(isNSFW || !!type) && (
+                  <Flex style={_.mt.xs}>
+                    {isNSFW && <Tag value='NSFW' />}
+                    {!!type && <Tag style={isNSFW ? _.ml.sm : undefined} value={typeCn} />}
+                  </Flex>
+                )}
               </Flex.Item>
-              <Flex>
-                {x18(id, name || nameJP) && <Tag style={_.ml.sm} value='NSFW' />}
-                {!!type && <Tag style={_.ml.sm} value={typeCn} />}
-              </Flex>
+              <Manage
+                subjectId={id}
+                collection={collection}
+                typeCn={typeCn}
+                onPress={handlePressManage}
+              />
             </Touchable>
 
             <View>
@@ -141,8 +160,11 @@ function ItemRecents({
 
             <InView style={_.mt.sm} y={y}>
               <Flex wrap='wrap'>
-                {actors.map(item => (
-                  <Flex key={item.id} style={stl(actors.length > 1 && styles.actors, _.mt.md)}>
+                {topActors.map(item => (
+                  <Flex
+                    key={item.id}
+                    style={stl(topActors.length > 1 && styles.actors, _.mt.md)}
+                  >
                     <Touchable animate onPress={() => handlePressActor(item.id)}>
                       <Avatar src={item.avatar} size={32} radius={_.radiusXs} />
                     </Touchable>
@@ -151,7 +173,7 @@ function ItemRecents({
                         {item.name}
                       </Text>
                       <Text style={_.mt.xs} size={10} type='sub' numberOfLines={1}>
-                        {item.info.replace(/ {2,}/g, '　')}
+                        {item.info.split(/\s+/).join(' / ')}
                       </Text>
                     </Flex.Item>
                   </Flex>
