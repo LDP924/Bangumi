@@ -199,6 +199,7 @@ export default {
 
   新番档期: 'Staff',
   '新番档期.跳转': 'Staff.to',
+  '新番档期.切换用户': 'Staff.switchUser',
   '新番档期.右上角菜单': 'Staff.topRightMenu',
 
   Hentai: 'Hentai',
@@ -251,5 +252,11 @@ export default {
   '词云.刷新': 'WordCloud.batch',
   '词云.分词': 'WordCloud.cut',
   '词云.点击': 'WordCloud.press',
-  '词云.跳转': 'WordCloud.to'
+  '词云.跳转': 'WordCloud.to',
+
+  关联系列: 'Series',
+  '关联系列.排序选择': 'Series.onSortSelect',
+  '关联系列.类型选择': 'Series.onFilterSelect',
+  '关联系列.年选择': 'Series.onAirtimeSelect',
+  '关联系列.状态选择': 'Series.onStatusSelect'
 }
