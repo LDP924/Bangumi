@@ -1,0 +1,182 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # 北京时间 12:00 / 00:00（GitHub cron 为 UTC）
+    - cron: '0 4,16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync with upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (永远用 GITHUB_TOKEN, PAT 无效值不劫持)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # 教训: secrets.SYNC_PAT || github.token 的 || 只对空值回落,
+          # 过期 PAT 是非空字符串照样劫持 checkout → fatal 128
+          # checkout 只读自己仓库, GITHUB_TOKEN 永远够用
+          token: ${{ github.token }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          # 注册 advance.json 自定义合并驱动 (此前仅 .gitattributes 声明未注册, 从未生效)
+          git config merge.advance-json.driver 'python3 .github/scripts/merge-advance-json.py %O %A %B'
+          git config merge.advance-json.name 'advance.json key-level merge'
+
+      - name: Select push token (PAT 有效才用, 否则回落 GITHUB_TOKEN)
+        id: token
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # SYNC_PAT 未设置 → 直接 GITHUB_TOKEN (工作流 push 不含 workflow 变更, 够用)
+          if [ -z "$SYNC_PAT" ]; then
+            echo "push_token=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
+            echo "未设置 SYNC_PAT, 使用内置 GITHUB_TOKEN"
+            exit 0
+          fi
+
+          # SYNC_PAT 存在 → 验证有效性, 过期自动回落 (不劫持工作流)
+          code=$(curl -s -o /tmp/token_check.json -w '%{http_code}' \
+            -H "Authorization: token $SYNC_PAT" \
+            "https://api.github.com/repos/${{ github.repository }}")
+          if [ "$code" = "200" ]; then
+            echo "push_token=${SYNC_PAT}" >> "$GITHUB_OUTPUT"
+            echo "SYNC_PAT 有效, 使用 PAT 推送"
+          else
+            echo "push_token=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
+            echo "::warning::SYNC_PAT 已失效 (HTTP $code, fine-grained PAT 默认 30 天过期)"
+            echo "::warning::已自动回落到内置 GITHUB_TOKEN; 可到 Settings → Secrets 清理失效的 SYNC_PAT"
+          fi
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/czy0729/Bangumi.git 2>/dev/null || true
+          git fetch upstream master
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          LOCAL=$(git rev-parse origin/master)
+          REMOTE=$(git rev-parse upstream/master)
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            echo "上游无新提交 ($REMOTE)"
+          else
+            MB=$(git merge-base origin/master upstream/master)
+            COUNT=$(git rev-list "$MB..upstream/master" --count)
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "commit_count=$COUNT" >> "$GITHUB_OUTPUT"
+            echo "上游领先 $COUNT 个提交: $REMOTE"
+          fi
+
+      - name: Collect upstream release notes (发行版日志 = 上游最新一次推送会话)
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          MB=$(git merge-base origin/master upstream/master)
+          # 发行版日志: 上游最新一次 push 会话的提交(1h 聚簇), 链接指上游
+          git log "$MB..upstream/master" --no-merges \
+            --pretty=format:'%ci|%H|%s' | python3 .github/scripts/cluster-notes.py \
+            > /tmp/upstream_notes.md
+          echo "=== 收集到的发行版日志 ==="
+          cat /tmp/upstream_notes.md
+
+      - name: Merge upstream (保护 fork 自有文件)
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          set -euo pipefail
+
+          git merge upstream/master --no-edit --no-ff || {
+            echo "::warning::出现合并冲突, 启动自动解决策略 (.github 目录强制保留 fork 版本)"
+            # fork 自有的 workflows / scripts 永远保留自己的 (冲突路径 HEAD=merge 前 fork 版)
+            # 上游新增的 .github 文件 checkout 恢复不掉, 显式删除
+            git diff HEAD --diff-filter=A --name-only -- .github/ | xargs -r git rm -q -f --
+            git checkout HEAD -- .github/workflows/ .github/scripts/ 2>/dev/null || true
+            # 剩余未解决冲突则放弃自动合并, 保留现场供人工处理
+            if ! git diff --name-only --diff-filter=U | grep -q .; then
+              git add -A
+              git commit --no-edit
+            else
+              echo "::error::以下文件冲突无法自动解决, 已中止 (本地未推送):"
+              git diff --name-only --diff-filter=U
+              exit 1
+            fi
+          }
+
+          # 无冲突路径 (2026-10-02 修): merge 自动提交后 HEAD=merge commit,
+          # checkout HEAD 只会恢复 merge 结果自身, 上游 workflow 变更原样跟着 push (Run 486 实锤)
+          # 恢复基准必须用 ORIG_HEAD (= merge 前的 fork 版本), 上游新增文件同样显式删除
+          git diff ORIG_HEAD --diff-filter=A --name-only -- .github/ | xargs -r git rm -q -f --
+          git checkout ORIG_HEAD -- .github/workflows/ .github/scripts/ 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit --amend --no-edit
+          fi
+
+      - name: Push synced master
+        if: steps.check.outputs.has_updates == 'true'
+        env:
+          PUSH_TOKEN: ${{ steps.token.outputs.push_token }}
+        run: |
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+          if ! git push origin master; then
+            echo "::error::推送失败。若报 refusing to allow a GitHub App to create or update workflow:"
+            echo "::error::说明本次 merge 意外携带了 workflow 变更, 检查 merge-protect 步骤是否执行。"
+            echo "::error::根治: 重建 SYNC_PAT (Settings → Developer settings → PAT, 勾选 workflows 权限)"
+            exit 1
+          fi
+          echo "=== 同步完成 ==="
+          echo "合并的上游提交:"
+          git log HEAD~${{ steps.check.outputs.commit_count }}..HEAD --pretty=format:"- %s (%h)" --no-merges || true
+
+      - name: Trigger APK build (携带上游日志)
+        if: steps.check.outputs.has_updates == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.push_token }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch inputs 体积有限, 截断保险
+          NOTES=$(head -c 60000 /tmp/upstream_notes.md)
+
+          jq -n \
+            --arg ref "master" \
+            --arg notes "$NOTES" \
+            '{ref: $ref, inputs: {release_notes: $notes}}' > /tmp/dispatch.json
+
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/dispatch_resp.json -w '%{http_code}' -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-upstream-apk.yml/dispatches" \
+              -d @/tmp/dispatch.json)
+            if [ "$code" = "204" ]; then
+              echo "已触发 APK 构建工作流 (HTTP 204)"
+              exit 0
+            fi
+            echo "dispatch 失败 (HTTP $code), 重试 $i/3"
+            cat /tmp/dispatch_resp.json || true
+            sleep 10
+          done
+          # dispatch 失败不拖红同步 —— master 已推上去, 同步本体是成功的
+          # 构建无第三入口: 此版本由下次检测到新提交的 dispatch 或手动触发补建
+          echo "::warning::dispatch 触发失败 (SYNC_PAT 可能过期, fine-grained 30 天寿命)"
+          echo "::warning::不影响同步结果; 此版本待下次有新提交或手动触发时构建"
+          exit 0
+
+      - name: No updates
+        if: steps.check.outputs.has_updates == 'false'
+        run: echo "已与上游同步, 无新提交"

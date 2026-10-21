@@ -17,7 +17,7 @@ jest.mock('expo-asset', () => ({
   }
 }))
 
-jest.mock('expo-file-system/legacy', () => ({
+jest.mock('expo-file-system', () => ({
   readAsStringAsync: jest.fn(),
   EncodingType: { Base64: 'base64' }
 }))
@@ -28,7 +28,7 @@ jest.mock('@assets/proto/manga/bin/index.bin', () => 202, { virtual: true })
 jest.mock('@assets/proto/ja/bin/index.bin', () => 302, { virtual: true })
 
 import { Asset } from 'expo-asset'
-import * as FileSystem from 'expo-file-system/legacy'
+import * as FileSystem from 'expo-file-system'
 import protobuf from 'protobufjs'
 import { fromByteArray } from '../../base64'
 import { cacheMap, promiseMap } from '../cache'

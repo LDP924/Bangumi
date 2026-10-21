@@ -15,7 +15,7 @@ jest.mock('../ds', () => ({
   TMP_TTL: 24 * 60 * 60 * 1000
 }))
 
-jest.mock('expo-file-system/legacy', () => ({
+jest.mock('expo-file-system', () => ({
   documentDirectory: '/cache/',
   makeDirectoryAsync: jest.fn(),
   readDirectoryAsync: jest.fn(),
@@ -28,7 +28,7 @@ jest.mock('expo-file-system/legacy', () => ({
 // jest/setup.js 全局 mock 了 crypto (只提供 get / set), 这里需要真实 SHA1
 jest.unmock('@utils/thirdParty/crypto')
 
-import * as FileSystem from 'expo-file-system/legacy'
+import * as FileSystem from 'expo-file-system'
 import { logger } from '@utils/dev'
 import { SHA1 } from '../../crypto'
 import {
