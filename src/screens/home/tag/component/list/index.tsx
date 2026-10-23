@@ -2,14 +2,14 @@
  * @Author: czy0729
  * @Date: 2022-07-30 04:30:43
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-28 09:00:00
+ * @Last Modified time: 2026-10-22 12:00:00
  *
  * 标签条目列表: ListView, 列表/网格双布局与工具条组装
  */
 import { useCallback, useMemo } from 'react'
 import { observer } from 'mobx-react'
 import { ListView } from '@components'
-import { Notice } from '@_'
+import { ITEM_SEARCH_HEIGHT, Notice } from '@_'
 import { _, useStore } from '@stores'
 import { keyExtractor, x18s } from '@utils'
 import { TEXT_18X } from '@constants'
@@ -26,8 +26,10 @@ import type { Ctx } from '../../types'
 function List() {
   const { $ } = useStore<Ctx>(COMPONENT)
 
-  const { list, hide, fixed, meta, order } = $.state
-  const numColumns = list ? undefined : _.portrait(_.device(3, 4), 5)
+  const { list, fixed, meta, order } = $.state
+
+  const columns = _.portrait(_.device(3, 4), 5)
+  const numColumns = list ? undefined : columns
 
   const elToolBar = useMemo(() => <ToolBar />, [])
   const elListHeaderComponent = useMemo(
@@ -58,13 +60,19 @@ function List() {
   return (
     <>
       {fixed && elToolBar}
-      {!!$.list._loaded && !hide && (
+      {!!$.list._loaded && (
         <ListView
+          // 仅布局/列数变化时重建, 筛选走 resetScrollView 回顶
           key={`${_.orientation}${numColumns}`}
           keyExtractor={keyExtractor}
+          ref={$.forwardRef}
           contentContainerStyle={!fixed ? styles.contentContainerStyle : _.container.bottom}
           numColumns={numColumns}
           data={$.list}
+          // 网格不启用 (FlatList 按行索引, 高度缓存会错位)
+          estimatedItemHeight={list ? ITEM_SEARCH_HEIGHT : undefined}
+          // 数据整批替换时跳过进场动画, 避免闪烁
+          skipEnteringExitingAnimations={12}
           ListHeaderComponent={elListHeaderComponent}
           renderItem={renderItem}
           footerEmptyDataText={x18s($.params.tag) ? TEXT_18X : undefined}
