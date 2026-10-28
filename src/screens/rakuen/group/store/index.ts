@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2019-07-13 18:49:32
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-10-24 10:00:00
+ * @Last Modified time: 2026-10-28 00:00:00
  *
  * 页面 Store 入口: init() / unmount()
  */
@@ -24,11 +24,13 @@ export default class ScreenGroup extends Action {
     this.setState({
       ...storageData,
       ...RESET_STATE,
-      ota: {},
       _loaded: true
     })
 
-    this.fetchGroup()
+    // setState 对 observable 对象是逐键合并, 空对象清不掉旧快照, 需要整体置换
+    this.clearState('ota')
+
+    this.fetchPage(this.state.page, this.state.page)
     return this.fetchGroupInfo()
   }
 
