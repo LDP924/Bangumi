@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2022-05-11 04:40:13
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-05-05 20:32:27
+ * @Last Modified time: 2026-10-29 00:00:00
  */
 
 /** Rakuen */
@@ -70,7 +70,6 @@ export default {
   '帖子.删除回复': 'Topic.doDeleteReply',
   '帖子.复制回复': 'Topic.copyReply',
   '帖子.复制楼层链接': 'Topic.copyFloorUrl',
-  '帖子.UCG': 'Topic.UCGAgree',
   '帖子.楼层跳转': 'Topic.scrollTo',
   '帖子.翻译内容': 'Topic.doTranslate',
   '帖子.贴贴': 'Topic.doLike',
@@ -89,16 +88,12 @@ export default {
   '日志.楼层跳转': 'Blog.scrollTo',
   '日志.聊天': 'Blog.chat',
 
-  社区指导原则: 'UCG',
-  '社区指导原则.跳转': 'UCG.to',
-  '社区指导原则.不同意': 'UCG.disagree',
-  '社区指导原则.同意': 'UCG.agree',
-
   帖子搜索: 'RakuenSearch',
   '帖子搜索.跳转': 'RakuenSearch.to',
   '帖子搜索.选择历史': 'RakuenSearch.selectHistory',
   '帖子搜索.删除历史': 'RakuenSearch.deleteHistory',
   '帖子搜索.搜索': 'RakuenSearch.doSearch',
+  '帖子搜索.排序': 'RakuenSearch.sort',
 
   讨论版: 'Board',
   '讨论版.跳转': 'Board.to',
