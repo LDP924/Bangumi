@@ -2,9 +2,10 @@
  * @Author: czy0729
  * @Date: 2021-01-21 17:55:11
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-07-22 20:25:57
+ * @Last Modified time: 2026-10-30 00:00:00
+ *
+ * 条目正文区: 标题与元信息
  */
-import React from 'react'
 import { View } from 'react-native'
 import { observer } from 'mobx-react'
 import Detail from '../detail'

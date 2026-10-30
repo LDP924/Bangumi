@@ -2,9 +2,10 @@
  * @Author: czy0729
  * @Date: 2024-01-05 16:02:06
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-03-22 02:59:06
+ * @Last Modified time: 2026-10-30 00:00:00
+ *
+ * 已读条目容器
  */
-import React from 'react'
 import { View } from 'react-native'
 import { observer } from 'mobx-react'
 import { useStore } from '@stores'

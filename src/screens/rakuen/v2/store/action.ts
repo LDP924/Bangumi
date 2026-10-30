@@ -2,7 +2,9 @@
  * @Author: czy0729
  * @Date: 2024-05-16 19:56:46
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-10-24 10:00:00
+ * @Last Modified time: 2026-10-30 00:00:00
+ *
+ * 超展开页业务逻辑
  */
 import { rakuenStore } from '@stores'
 import { confirm, feedback, info, updateVisibleBottom } from '@utils'
@@ -17,11 +19,12 @@ import {
   TEXT_MENU_BLOCK,
   TEXT_MENU_IGNORE
 } from '@constants'
-import { PREFETCH_COUNT } from '../ds'
+import { PREFETCH_COUNT, TEXT_PREFIX_BLOCK, TEXT_PREFIX_ENTER } from '../ds'
 import Fetch from './fetch'
-import { INIT_PREFETCH_STATE } from './ds'
+import { INIT_PREFETCH_STATE, VIEW_OFFSET_TOP } from './ds'
 
 import type { ScrollToIndex } from '@components'
+import type { RakuenItem } from '@stores/rakuen/types'
 import type {
   MonoId,
   Navigation,
@@ -29,7 +32,8 @@ import type {
   RakuenTypeGroupCn,
   RakuenTypeMono,
   RakuenTypeMonoCn,
-  TopicId
+  TopicId,
+  UserId
 } from '@types'
 
 export default class Action extends Fetch {
@@ -46,7 +50,7 @@ export default class Action extends Fetch {
   }
 
   /** 超展开列表 */
-  shouldFetchRakuen = page => {
+  shouldFetchRakuen = (page: number) => {
     const { _loaded, list } = this.rakuen(this.type(page))
     if (!_loaded || list.length === 0) this.fetchRakuen()
     this.save()
@@ -78,11 +82,6 @@ export default class Action extends Fetch {
     this.save()
   }
 
-  /** 更新帖子历史查看信息 */
-  onItemPress = (topicId: TopicId, replies: any) => {
-    rakuenStore.updateTopicReaded(topicId, replies)
-  }
-
   /** 项额外点击 */
   onExtraSelect = (
     title: string,
@@ -90,8 +89,8 @@ export default class Action extends Fetch {
       groupHref?: string
       groupCn?: string
       topicId?: string
-      userName?: any
-      userId?: any
+      userName?: string
+      userId?: UserId
       href?: string
     },
     navigation: Navigation
@@ -102,7 +101,7 @@ export default class Action extends Fetch {
     let monoId: MonoId
 
     switch (title) {
-      case '进入小组':
+      case `${TEXT_PREFIX_ENTER}小组`:
         groupId = values.groupHref.replace('/group/', '')
         t(eventId, {
           title,
@@ -115,7 +114,7 @@ export default class Action extends Fetch {
         })
         break
 
-      case '进入条目':
+      case `${TEXT_PREFIX_ENTER}条目`:
         subjectId = values.groupHref.replace('/subject/', '')
         t(eventId, {
           title,
@@ -127,7 +126,7 @@ export default class Action extends Fetch {
         })
         break
 
-      case '进入人物':
+      case `${TEXT_PREFIX_ENTER}人物`:
         monoId = values.topicId.replace('prsn/', 'person/').replace('crt/', 'character/') as MonoId
         t(eventId, {
           title,
@@ -139,9 +138,9 @@ export default class Action extends Fetch {
         })
         break
 
-      case '屏蔽小组':
-      case '屏蔽条目':
-      case '屏蔽人物':
+      case `${TEXT_PREFIX_BLOCK}小组`:
+      case `${TEXT_PREFIX_BLOCK}条目`:
+      case `${TEXT_PREFIX_BLOCK}人物`:
         confirm(`确定${title}?`, () => {
           t(eventId, {
             title,
@@ -198,9 +197,9 @@ export default class Action extends Fetch {
     }
   }
 
-  /** 获取未读帖子的id */
-  getUnreadTopicIds = async (list: any[] = []) => {
-    const ids = []
+  /** 获取未读帖子的id, 数据来自网页解析, 逐条防御脏数据 */
+  getUnreadTopicIds = async (list: RakuenItem[] = []) => {
+    const ids: TopicId[] = []
     for (const item of list) {
       try {
         // 需要检查回复数是否小于LIMIT_TOPIC_PUSH
@@ -241,14 +240,14 @@ export default class Action extends Fetch {
   }
 
   /** 预读取帖子内容 */
-  prefetch = async (ids = []) => {
+  prefetch = async (ids: TopicId[] = []) => {
     if (!ids.length) return
 
     t('超展开.预读取', {
       length: ids.length
     })
 
-    const _ids = ids.filter((_item, index) => index < PREFETCH_COUNT)
+    const _ids = ids.slice(0, PREFETCH_COUNT)
     let prefetchCurrent = 0
     this.setState({
       prefetching: true,
@@ -308,7 +307,7 @@ export default class Action extends Fetch {
         this.scrollToIndex[page]({
           animated: true,
           index: 0,
-          viewOffset: 8000
+          viewOffset: VIEW_OFFSET_TOP
         })
 
         await this.onHeaderRefresh()
