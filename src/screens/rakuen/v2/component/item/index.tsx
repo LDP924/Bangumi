@@ -30,7 +30,8 @@ function ItemWrap({
   title,
   time,
   epoch,
-  replies
+  replies,
+  _placeholder
 }: Props) {
   const { $, navigation } = useStore<Ctx>(COMPONENT)
 
@@ -43,7 +44,8 @@ function ItemWrap({
       navigation,
       {
         _title: title,
-        _replies: `+${replyCount}`,
+        // 回复数为 0 时不传, 避免详情页标题右侧固定显示 +0
+        ...(replyCount > 0 ? { _replies: `+${replyCount}` } : {}),
         _group: group,
         _time: time,
         _avatar: avatar,
@@ -55,8 +57,11 @@ function ItemWrap({
       }
     )
 
+    // 回复数未知时沿用已读记录, 避免被 0 覆盖
     setTimeout(() => {
-      rakuenStore.updateTopicReaded(topicId, replyCount)
+      if (href.includes('/rakuen/topic/')) {
+        rakuenStore.updateTopicReaded(topicId, replyCount || rakuenStore.readed(topicId).replies)
+      }
     }, DELAY_UPDATE_READED)
   }, [avatar, group, href, navigation, replyCount, time, title, topicId, userId, userName])
 
@@ -108,6 +113,7 @@ function ItemWrap({
       replyCount={replyCount}
       isGroup={getIsGroup(topicId)}
       onPress={handlePress}
+      _placeholder={!!_placeholder}
     />
   )
 }

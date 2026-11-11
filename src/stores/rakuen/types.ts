@@ -65,10 +65,25 @@ export type RakuenItem = {
 
   /** 绝对时间戳（秒），用于缓存冷启动后重新计算相对时间 */
   epoch?: number
+
+  /** 无头像时显示文字占位 */
+  _placeholder?: boolean
 }
 
 /** 超展开 */
 export type Rakuen = ListEmpty<RakuenItem>
+
+/** 用户回复过的章节 */
+export type EpReplied = {
+  /** 已同步到的最新回复时间 */
+  syncedAt: number
+
+  /** 上次同步时间, 用于冷却 */
+  checkedAt: number
+
+  /** 回复过的章节 id */
+  eps: number[]
+}
 
 /** 帖子历史查看信息 */
 export type Readed = {
@@ -116,6 +131,9 @@ export type Topic = {
 
   /** 发帖时间 */
   time: string
+
+  /** 回复数, 由详情页分页信息估算, 取不到时为空 */
+  replies: string
 
   /** 帖子标题 */
   title: string
@@ -320,6 +338,30 @@ export type Mine = ListEmpty<
     num: string
   }>
 >
+
+/** CDN 用户历史帖子原始项 */
+export type UserTopicsFromCDNRaw = {
+  /** 帖子 id */
+  id: Id
+
+  /** 标题 */
+  t: string
+
+  /** 小组 */
+  g: string
+
+  /** 时间 */
+  ti: string
+
+  /** 头像 */
+  av: string
+
+  /** 用户 id */
+  uid: UserId
+
+  /** 用户名 */
+  un: string
+}
 
 /** 用户历史超展开帖子项 */
 export type UserTopicsFromCDNItem = {

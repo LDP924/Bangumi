@@ -34,6 +34,7 @@ import type {
   Board,
   BookmarksItem,
   Comments,
+  EpReplied,
   Group,
   GroupInfo,
   Likes,
@@ -73,6 +74,7 @@ export const INIT_TOPIC = {
   lastview: '',
   message: '',
   time: '',
+  replies: '',
   title: '',
   userId: '',
   userName: '',
@@ -307,6 +309,9 @@ const STATE = {
   /** 超展开热门 */
   hot: LIST_EMPTY as Rakuen,
 
+  /** 用户回复过的章节 */
+  epReplied: {} as Record<UserId, EpReplied>,
+
   /** 屏蔽用户的屏蔽次数追踪 */
   blockedUsersTrack: {
     0: 0
@@ -388,6 +393,7 @@ export const LOADED = {
   bookmarks: false,
   cloudTopic: false,
   comments: false,
+  epReplied: false,
   favor: false,
   favorCount: false,
   favorV2: false,

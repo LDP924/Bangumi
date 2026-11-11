@@ -6,21 +6,25 @@
  *
  * 超展开页业务逻辑
  */
-import { rakuenStore } from '@stores'
+import { rakuenStore, userStore } from '@stores'
 import { confirm, feedback, info, updateVisibleBottom } from '@utils'
 import { getBucketId } from '@utils/bucket'
 import { logger } from '@utils/dev'
 import { t } from '@utils/fetch'
-import { parseReplies } from '@screens/rakuen/utils'
 import {
   LIMIT_TOPIC_PUSH,
+  MODEL_RAKUEN_TYPE_ALL,
+  MODEL_RAKUEN_TYPE_EP,
   MODEL_RAKUEN_TYPE_GROUP,
   MODEL_RAKUEN_TYPE_MONO,
+  MODEL_RAKUEN_TYPE_SUBJECT,
   TEXT_MENU_BLOCK,
   TEXT_MENU_IGNORE
 } from '@constants'
+import { parseReplies } from '@screens/rakuen/utils'
 import { PREFETCH_COUNT, TEXT_PREFIX_BLOCK, TEXT_PREFIX_ENTER } from '../ds'
 import Fetch from './fetch'
+import { getDataSourceKey, isMyReplyType } from './utils'
 import { INIT_PREFETCH_STATE, VIEW_OFFSET_TOP } from './ds'
 
 import type { ScrollToIndex } from '@components'
@@ -28,17 +32,25 @@ import type { RakuenItem } from '@stores/rakuen/types'
 import type {
   MonoId,
   Navigation,
+  RakuenTypeAll,
+  RakuenTypeAllCn,
+  RakuenTypeEp,
+  RakuenTypeEpCn,
   RakuenTypeGroup,
   RakuenTypeGroupCn,
   RakuenTypeMono,
   RakuenTypeMonoCn,
+  RakuenTypeSubject,
+  RakuenTypeSubjectCn,
   TopicId,
   UserId
 } from '@types'
 
 export default class Action extends Fetch {
+  private retriedKey = ''
+
   /** 标签页切换 */
-  onChange = (page: number) => {
+  onChange = (page: number, triggerFetch: boolean = true) => {
     t('超展开.标签页切换', {
       page
     })
@@ -46,13 +58,46 @@ export default class Action extends Fetch {
     this.setState({
       page
     })
-    this.shouldFetchRakuen(page)
+    if (triggerFetch) void this.shouldFetchRakuen(page)
   }
 
   /** 超展开列表 */
-  shouldFetchRakuen = (page: number) => {
-    const { _loaded, list } = this.rakuen(this.type(page))
-    if (!_loaded || list.length === 0) this.fetchRakuen()
+  shouldFetchRakuen = async (page: number) => {
+    const type = this.type(page)
+    const key = getDataSourceKey(type)
+    if (key) {
+      const needsAccount = isMyReplyType(type)
+      if (needsAccount && !userStore.myId) {
+        this.save()
+        return
+      }
+
+      const { _loaded, _userId, _source, _error } = this.state.wataame
+      const accountMismatch = needsAccount && _userId !== userStore.myId
+      const shouldRetry = _error && this.retriedKey !== key
+      if (!_loaded || shouldRetry || accountMismatch || _source !== key) {
+        if (shouldRetry) this.retriedKey = key
+        await this.fetchRakuen()
+      }
+      this.save()
+      return
+    }
+
+    const { _loaded, list } = this.rakuen(type)
+    if (!_loaded || list.length === 0) await this.fetchRakuen()
+    this.save()
+  }
+
+  /** 全部菜单点击 */
+  onAllMenuPress = (title: RakuenTypeAllCn) => {
+    t('超展开.全部菜单点击', {
+      title
+    })
+
+    this.setState({
+      all: MODEL_RAKUEN_TYPE_ALL.getValue<RakuenTypeAll>(title)
+    })
+    this.fetchRakuen()
     this.save()
   }
 
@@ -64,6 +109,32 @@ export default class Action extends Fetch {
 
     this.setState({
       group: MODEL_RAKUEN_TYPE_GROUP.getValue<RakuenTypeGroup>(title)
+    })
+    this.fetchRakuen()
+    this.save()
+  }
+
+  /** 条目菜单点击 */
+  onSubjectMenuPress = (title: RakuenTypeSubjectCn) => {
+    t('超展开.条目菜单点击', {
+      title
+    })
+
+    this.setState({
+      subject: MODEL_RAKUEN_TYPE_SUBJECT.getValue<RakuenTypeSubject>(title)
+    })
+    this.fetchRakuen()
+    this.save()
+  }
+
+  /** 章节菜单点击 */
+  onEpMenuPress = (title: RakuenTypeEpCn) => {
+    t('超展开.章节菜单点击', {
+      title
+    })
+
+    this.setState({
+      ep: MODEL_RAKUEN_TYPE_EP.getValue<RakuenTypeEp>(title)
     })
     this.fetchRakuen()
     this.save()
@@ -115,7 +186,9 @@ export default class Action extends Fetch {
         break
 
       case `${TEXT_PREFIX_ENTER}条目`:
-        subjectId = values.groupHref.replace('/subject/', '')
+        subjectId = values.groupHref?.replace('/subject/', '')
+        if (!subjectId) break
+
         t(eventId, {
           title,
           subjectId
@@ -316,6 +389,15 @@ export default class Action extends Fetch {
     } catch (error) {
       logger.error('Rakuen', 'onRefreshThenScrollTop', error)
     }
+  }
+
+  /** 上滑加载更多, 仅 wataame 数据源有分页 */
+  onFooterRefresh = () => {
+    const type = this.type(this.state.page)
+    const key = getDataSourceKey(type)
+    if (!key) return Promise.resolve(this.state.wataame)
+
+    return this.fetchWataameMore(key)
   }
 
   /** 更新可视范围底部 y */
