@@ -2,13 +2,14 @@
  * @Author: czy0729
  * @Date: 2026-08-27 02:45:00
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-28 10:00:00
+ * @Last Modified time: 2026-11-15 21:08:50
  *
  * 首页界面操作: Modal 显隐 / 展开收起置顶 / 列表刷新
  */
+import { subjectStore } from '@stores'
 import { feedback } from '@utils'
-import { t } from '@utils/fetch'
 import { logger } from '@utils/dev'
+import { t } from '@utils/fetch'
 import { MODEL_SUBJECT_TYPE } from '@constants'
 import { EXCLUDE_STATE, NAMESPACE, STATE } from '../ds'
 import Base from './base'
@@ -21,7 +22,8 @@ export default class Ui extends Base {
     this.setState({
       visible: true,
       subjectId,
-      modal: modal || EXCLUDE_STATE.modal // 游戏没有主动请求条目数据, 需要手动传递标题
+      // 显式带上 action 键: 未传时置空, 由弹窗按条目类型推导, 避免合并时残留上一次的值
+      modal: modal ? { ...EXCLUDE_STATE.modal, ...modal } : EXCLUDE_STATE.modal
     })
 
     t('首页.显示收藏管理', {
@@ -52,7 +54,28 @@ export default class Ui extends Base {
     this.save()
 
     if (!expand) {
-      this.fetchSubject(subjectId)
+      // 展开是无条件刷新时机: this.fetchSubject 带 6 小时节流闸门, 闸门内新放送的话不会出现,
+      // 这里直接请求条目数据保证章节列表与收视进度即时可见
+      const key = this.state.progress.fetchingSubjectId2
+        ? 'fetchingSubjectId1'
+        : 'fetchingSubjectId2'
+      this.setState({
+        progress: {
+          [key]: subjectId
+        }
+      })
+      subjectStore
+        .fetchSubject(subjectId)
+        .catch(error => {
+          logger.error(NAMESPACE, 'itemToggleExpand', error)
+        })
+        .finally(() => {
+          this.setState({
+            progress: {
+              [key]: 0
+            }
+          })
+        })
       this.fetchUserProgress(subjectId)
     }
 
