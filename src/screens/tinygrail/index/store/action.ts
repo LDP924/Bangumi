@@ -2,7 +2,7 @@
  * @Author: czy0729
  * @Date: 2024-12-29 11:16:17
  * @Last Modified by: czy0729
- * @Last Modified time: 2026-09-05 04:43:08
+ * @Last Modified time: 2026-11-19 22:25:29
  */
 import { systemStore, tinygrailStore } from '@stores'
 import {
@@ -102,7 +102,7 @@ export default class Action extends Fetch {
       }
 
       this._doAuthFailCount = 0
-      info(`授权失败请重试, 或检查${i18n.login()}状态`)
+      info(`授权失败请重试，或检查${i18n.login()}状态`)
       this.setState({
         loading: false
       })
@@ -198,7 +198,7 @@ export default class Action extends Fetch {
       this.setState({
         loadingBonus: false
       })
-      info('操作失败，可能授权过期了')
+      info('操作失败，或授权状态已过期')
     }
   }
 
@@ -232,7 +232,7 @@ export default class Action extends Fetch {
       this.setState({
         loadingBonus: false
       })
-      info('操作失败，可能授权过期了')
+      info('操作失败，或授权状态已过期')
     }
   }
 
@@ -266,7 +266,7 @@ export default class Action extends Fetch {
       this.setState({
         loadingBonus: false
       })
-      info('操作失败，可能授权过期了')
+      info('操作失败，或授权状态已过期')
     }
   }
 
@@ -300,7 +300,7 @@ export default class Action extends Fetch {
       this.setState({
         loadingBonus: false
       })
-      info('操作失败，可能授权过期了')
+      info('操作失败，或授权状态已过期')
     }
   }
 
@@ -407,7 +407,9 @@ export default class Action extends Fetch {
         this._callbackCookieLogged = true
         addWorkerLog(
           'warn',
-          `callback 未下发会话 cookie (status=${callbackResponse.status}, headers=${Object.keys(callbackResponse.headers || {}).join(',')})`,
+          `callback 未下发会话 cookie (status=${callbackResponse.status}, headers=${Object.keys(
+            callbackResponse.headers || {}
+          ).join(',')})`,
           'host'
         )
       }

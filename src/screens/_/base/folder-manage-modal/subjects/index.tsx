@@ -20,7 +20,6 @@ import type { Props } from './types'
 function Subjects({
   forwardRef,
   id,
-  create,
   edit,
   content,
   order,
@@ -41,7 +40,6 @@ function Subjects({
       renderItem({
         forwardRef,
         id,
-        create,
         edit,
         content,
         order,
@@ -57,7 +55,6 @@ function Subjects({
       }),
     [
       content,
-      create,
       edit,
       forwardRef,
       id,
@@ -88,7 +85,7 @@ function Subjects({
       renderItem={handleRenderItem}
       footerNoMoreDataComponent={
         <Text style={_.mt.md} type={_.select('sub', 'icon')} size={12} align='center'>
-          - 到底了 -
+          - 到底啦 -
         </Text>
       }
     />
